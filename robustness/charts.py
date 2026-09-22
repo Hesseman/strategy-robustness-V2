@@ -7,7 +7,10 @@ import plotly.graph_objects as go
 from robustness.cost_stress import CostStressResult
 from robustness.drawdown import DrawdownResult
 from robustness.null_entry import RandomEntryResult
+from robustness.plateau_grid import PlateauWindow
+from robustness.selection import SelectionWindow
 from robustness.temporal import TemporalResult
+from robustness.wfc_grid import WFCWindow
 
 ACCENT, MUTED, GREEN, RED, PALE = "#1f5fbf", "#9a9a94", "#2e8b57", "#c0392b", "#dfe7f5"
 _LAYOUT = dict(template="plotly_white", margin=dict(l=40, r=20, t=20, b=40), height=320, showlegend=False)
@@ -81,4 +84,46 @@ def fig_episode_hist(dd: DrawdownResult) -> go.Figure:
     fig.add_vline(x=dd.cdar80, line_color=ACCENT, line_width=3, annotation_text=f"CDaR-80 ${dd.cdar80:,.0f}", annotation_position="top")
     fig.add_vline(x=dd.max_dd, line_color=RED, line_dash="dash", annotation_text=f"max ${dd.max_dd:,.0f}", annotation_position="bottom right")
     fig.update_layout(**_LAYOUT, xaxis_title="drawdown episode depth, $", yaxis_title="episodes")
+    return fig
+
+
+def fig_wfc_scatter(w: WFCWindow, metric_label: str) -> go.Figure:
+    """In-sample vs out-of-sample metric per parameter combination, MultiWalk's pick highlighted, zero lines."""
+    m = np.isfinite(w.x) & np.isfinite(w.y)
+    fig = go.Figure(go.Scatter(x=w.x[m], y=w.y[m], mode="markers", marker=dict(color=MUTED, size=7, opacity=0.75), name="combinations"))
+    if np.isfinite(w.x[w.pick_index]) and np.isfinite(w.y[w.pick_index]):
+        fig.add_trace(go.Scatter(x=[w.x[w.pick_index]], y=[w.y[w.pick_index]], mode="markers",
+                                 marker=dict(color=RED, size=13, symbol="diamond"), name="MultiWalk's pick"))
+    fig.add_hline(y=0, line_color=ACCENT, line_width=1); fig.add_vline(x=0, line_color=ACCENT, line_width=1)
+    fig.update_layout(**_LAYOUT, xaxis_title=f"in-sample {metric_label}", yaxis_title=f"out-of-sample {metric_label}")
+    return fig
+
+
+def fig_wfc_null(w: WFCWindow) -> go.Figure:
+    """Histogram of the shifted-surface null of Spearman rho with the observed value marked."""
+    fig = go.Figure(go.Histogram(x=w.null, nbinsx=30, marker_color=MUTED))
+    fig.add_vline(x=w.spearman, line_color=ACCENT, line_width=3, annotation_text=f"observed ρ = {w.spearman:.2f}", annotation_position="top")
+    fig.update_layout(**_LAYOUT, xaxis_title="Spearman ρ of shifted OOS surfaces", yaxis_title=f"count of {w.null.size} shifts")
+    return fig
+
+
+def fig_plateau(p: PlateauWindow, names: list[str], pick_params: list[float]) -> go.Figure:
+    """Out-of-sample metric of the pick (first, accent) and its grid neighbours (muted), sorted."""
+    labels = ["pick " + "/".join(f"{v:g}" for v in pick_params)] + [f"nb {j}" for j in range(1, len(p.oos_values))]
+    order = [0] + sorted(range(1, len(p.oos_values)), key=lambda j: -np.nan_to_num(p.oos_values[j], nan=-np.inf))
+    fig = go.Figure(go.Bar(x=[labels[j] for j in order], y=[p.oos_values[j] for j in order],
+                           marker_color=[ACCENT if j == 0 else MUTED for j in order]))
+    fig.add_hline(y=0, line_color=RED, line_width=1)
+    fig.update_layout(**_LAYOUT, yaxis_title="out-of-sample metric", xaxis_title=f"pick and its {p.n_neighbours} neighbours on {'/'.join(names)}")
+    return fig
+
+
+def fig_selection(s: SelectionWindow) -> go.Figure:
+    """Histogram of the best-of-grid null (mean daily $) with the observed best and the pick marked."""
+    fig = go.Figure(go.Histogram(x=s.null_max, nbinsx=30, marker_color=MUTED))
+    if np.isfinite(s.best_mean):
+        fig.add_vline(x=s.best_mean, line_color=ACCENT, line_width=3, annotation_text=f"best {s.best_mean:,.1f}", annotation_position="top")
+    if np.isfinite(s.pick_mean):
+        fig.add_vline(x=s.pick_mean, line_color=RED, line_width=2, annotation_text=f"pick {s.pick_mean:,.1f}", annotation_position="bottom")
+    fig.update_layout(**_LAYOUT, xaxis_title="best mean daily $ across the grid under no edge", yaxis_title=f"count of {s.null_max.size} resamples")
     return fig
