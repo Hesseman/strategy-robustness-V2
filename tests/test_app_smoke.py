@@ -34,12 +34,6 @@ def _write_losing_sample(tmp_path):
     return report, bars_file
 
 
-def test_app_renders_without_files():
-    at = AppTest.from_file(APP, default_timeout=60).run()
-    assert not at.exception, [str(e) for e in at.exception]
-    assert any("Upload both files" in el.value for el in at.info)
-
-
 def test_app_renders_full_battery_on_sample(tmp_path, monkeypatch):
     report, bars_file = _write_sample(tmp_path)
     monkeypatch.setenv("SR_SAMPLE_REPORT", str(report))
@@ -78,3 +72,44 @@ def test_app_renders_demo():
     at.run()
     assert not at.exception, [str(e) for e in at.exception]
     assert "Gates passed" in " ".join(el.value for el in at.markdown)
+
+
+def _write_mw_sample(tmp_path):
+    from robustness.synthetic_multiwalk import make_multiwalk, make_walkforward_db
+    text, sched = make_multiwalk({"A": list(range(5)), "B": list(range(4))}, n_days=600, seed=8, structure="persistent", split=400)
+    d = tmp_path / "mw"; (d / "Optimization Files").mkdir(parents=True); (d / "Walkforward Files").mkdir()
+    (d / "Optimization Files" / "Synthetic_MW [@SYN-30min]_MultiWalk.txt").write_text(text, encoding="utf-8")
+    (d / "Walkforward Files" / "WalkforwardData.db").write_bytes(make_walkforward_db(sched))
+    return d
+
+
+def test_app_renders_without_files_and_shows_both_sections():
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    assert not at.exception, [str(e) for e in at.exception]
+    text = " ".join(el.value for el in at.markdown) + " ".join(el.value for el in at.info)
+    assert "MultiWalk surface tests" in " ".join(h.value for h in at.header)
+    assert "Upload both files" in text
+
+
+def test_app_renders_multiwalk_section_on_sample(tmp_path, monkeypatch):
+    monkeypatch.setenv("SR_SAMPLE_MW_DIR", str(_write_mw_sample(tmp_path)))
+    at = AppTest.from_file(APP, default_timeout=240)
+    at.session_state["mw_sample"] = True
+    at.run()
+    assert not at.exception, [str(e) for e in at.exception]
+    joined = "\n".join(el.value for el in at.markdown)
+    assert "Walk Forward Correlation" in joined and "Plateau" in joined and "Selection haircut" in joined
+    assert "PASS" in joined or "FAIL" in joined
+    import re
+    assert re.search(r"(?<!\\)\$\d", joined) is None, "an unescaped dollar amount reached st.markdown"
+
+
+def test_capital_radio_switches_the_drawdown_line(tmp_path, monkeypatch):
+    report, bars_file = _write_sample(tmp_path)
+    monkeypatch.setenv("SR_SAMPLE_REPORT", str(report)); monkeypatch.setenv("SR_SAMPLE_BARS", str(bars_file))
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["sample"] = True
+    at.run()
+    at.radio(key="capital_basis").set_value("Fixed starting capital").run()
+    joined = "\n".join(el.value for el in at.markdown)
+    assert "your starting capital" in joined and "5 x CDaR-80 would be" in joined
