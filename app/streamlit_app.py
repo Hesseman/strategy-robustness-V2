@@ -1,7 +1,6 @@
 """Strategy Robustness App - Streamlit UI. Uploads -> parse -> validate -> battery -> cards."""
 from __future__ import annotations
 
-import glob
 import math
 import os
 import sys
@@ -21,6 +20,7 @@ from robustness.multiwalk_battery import MultiWalkValidationFailed, mw_to_json, 
 from robustness.multiwalk_text import MultiWalkFormatError, parse_multiwalk_text  # noqa: E402
 from robustness.report_parser import ReportFormatError, parse_report  # noqa: E402
 from robustness.walkforward_db import WalkforwardDBError, parse_walkforward_db  # noqa: E402
+import glob  # noqa: E402
 
 st.set_page_config(page_title="Strategy Robustness V2", layout="wide")
 
