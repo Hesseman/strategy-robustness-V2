@@ -60,3 +60,22 @@ def test_incomplete_or_tiny_window_is_insufficient():
     x = metric_values(window_metrics(grid, windows[0].is_mask), "NP"); y = metric_values(window_metrics(grid, windows[0].oos_mask), "NP")
     r = wfc_test([(x, y)], windows, grid, metric="NP", n_null=50, seed=0)
     assert r.windows[0].insufficient and not r.passed and r.reasons == ["wfc_insufficient"]
+
+
+def test_window_null_correlates_over_all_pairs_finite_after_the_shift():
+    """Regression: the per-window null must use the raw x (like the pooled null), not x with the
+    original y's holes copied in - otherwise dropped OOS cells shrink every null draw's point set."""
+    from robustness.wfc_grid import _Shifter
+    text, sched = make_multiwalk(AX, n_days=1200, seed=5, structure="persistent", split=800)
+    grid = parse_multiwalk_text(text)
+    windows = derive_windows(parse_walkforward_db(make_walkforward_db(sched))[0], grid.dates)
+    x = metric_values(window_metrics(grid, windows[0].is_mask), "NP")
+    y = metric_values(window_metrics(grid, windows[0].oos_mask), "NP").copy()
+    y[:12] = np.nan                                  # 12 combinations dropped on the OOS side only
+    sh = _Shifter(grid)
+    w = wfc_window(x, y, windows[0], sh, n_null=199, seed=0)
+    assert w.n_points == 24 and w.n_dropped == 12 and w.null.size == 35
+    rng = np.random.default_rng(0 + 1000 * windows[0].index)
+    yn = np.where(np.isfinite(y), y, np.nan)
+    expected = np.array([spearman(x, sh.apply(yn, s, rng)) for s in sh.all_shifts(rng, 199)])
+    assert np.allclose(w.null, expected)

@@ -134,9 +134,9 @@ def wfc_window(x: np.ndarray, y: np.ndarray, window: Window, shifter: _Shifter, 
     rng = np.random.default_rng(seed + 1000 * window.index)
     null = np.empty(0)
     if not insufficient:
-        yn = np.where(valid, y, np.nan); xn = np.where(valid, x, np.nan)
+        yn = np.where(valid, y, np.nan)   # Y's surface with its own holes; correlate over the cells finite on both sides AFTER the shift (same construction as the pooled null)
         shifts = shifter.all_shifts(rng, n_null) if shifter.full else [None] * n_null
-        null = np.array([spearman(xn, shifter.apply(yn, s, rng)) for s in shifts])
+        null = np.array([spearman(x, shifter.apply(yn, s, rng)) for s in shifts])
     p = float((1 + int((null >= rho).sum())) / (1 + null.size)) if null.size else 1.0
     pick = window.grid_row - 1
     return WFCWindow(index=window.index, label=window.label, complete=window.complete, n_points=n, n_dropped=int(len(x) - n),
