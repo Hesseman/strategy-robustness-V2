@@ -44,12 +44,12 @@ def neighbours(grid_pos: np.ndarray, i: int) -> np.ndarray:
 
 def plateau_score(values: np.ndarray) -> tuple[float, float, float]:
     """Accepts the neighbourhood's metric values, pick first. Returns (score, flat, positive_share)
-    per the module rule, using finite values only. Guarantees all three in [0, 1] and (0, 0, 0)
-    when fewer than 2 finite values."""
+    per the module rule, using finite values only. Guarantees all three in [0, 1] and
+    (NaN, NaN, NaN) when fewer than 2 finite values - too little data to score, never a spike."""
     v = np.asarray(values, dtype=float)
     f = v[np.isfinite(v)]
     if f.size < 2:
-        return 0.0, 0.0, 0.0
+        return float("nan"), float("nan"), float("nan")
     mean = float(f.mean())
     flat = max(0.0, 1.0 - min(1.0, float(f.std()) / (abs(mean) + 1e-9))) if mean > 0 else 0.0
     nb = v[1:]
@@ -61,7 +61,8 @@ def plateau_score(values: np.ndarray) -> tuple[float, float, float]:
 def plateau_test(pairs: list[tuple[np.ndarray, np.ndarray]], windows: list[Window], grid: MultiWalkGrid) -> PlateauResult:
     """Plateau score per window and pooled over complete windows.
     Accepts: pairs[i] = (IS metric, OOS metric) per iteration for windows[i]; the grid.
-    Returns: PlateauResult; pooled_score = mean score_oos over complete windows (NaN if none)."""
+    Returns: PlateauResult; pooled_score = mean score_oos over the complete windows that could be
+    scored (NaN when none of them could)."""
     out: list[PlateauWindow] = []
     for (x, y), w in zip(pairs, windows):
         i = w.grid_row - 1
@@ -72,5 +73,6 @@ def plateau_test(pairs: list[tuple[np.ndarray, np.ndarray]], windows: list[Windo
         out.append(PlateauWindow(index=w.index, label=w.label, complete=w.complete, pick_index=i, neighbour_index=nb,
                                  is_values=is_vals, oos_values=oos_vals, score_oos=s_oos, flat_oos=flat,
                                  positive_share_oos=share, score_is=s_is, n_neighbours=int(len(nb))))
-    complete = [p.score_oos for p in out if p.complete]
-    return PlateauResult(windows=out, pooled_score=float(np.mean(complete)) if complete else float("nan"), n_complete=len(complete))
+    complete = np.array([p.score_oos for p in out if p.complete], dtype=float)
+    pooled = float(np.nanmean(complete)) if np.isfinite(complete).any() else float("nan")
+    return PlateauResult(windows=out, pooled_score=pooled, n_complete=int(complete.size))

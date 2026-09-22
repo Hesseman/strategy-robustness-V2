@@ -72,9 +72,10 @@ def test_window_null_correlates_over_all_pairs_finite_after_the_shift():
     x = metric_values(window_metrics(grid, windows[0].is_mask), "NP")
     y = metric_values(window_metrics(grid, windows[0].oos_mask), "NP").copy()
     y[:12] = np.nan                                  # 12 combinations dropped on the OOS side only
+    x[20:23] = np.nan   # 3 IS-side holes where the OOS side is finite: the two null constructions differ here
     sh = _Shifter(grid)
     w = wfc_window(x, y, windows[0], sh, n_null=199, seed=0)
-    assert w.n_points == 24 and w.n_dropped == 12 and w.null.size == 35
+    assert w.n_points == 21 and w.n_dropped == 15 and w.null.size == 35
     rng = np.random.default_rng(0 + 1000 * windows[0].index)
     yn = np.where(np.isfinite(y), y, np.nan)
     expected = np.array([spearman(x, sh.apply(yn, s, rng)) for s in sh.all_shifts(rng, 199)])

@@ -160,6 +160,14 @@ def _p3(p: float) -> str:
     return "n/a" if not math.isfinite(p) else (f"p = {p:.4f}" if p < 0.001 else f"p = {p:.3f}")
 
 
+def _rank(pct: float, n: int) -> str:
+    """Percentile rank (share of combinations below) -> '<place> of <n>', best first. 'n/a' when
+    the percentile is not finite or there are no points."""
+    if not math.isfinite(pct) or n == 0:
+        return "n/a"
+    return f"{n - int(round(pct / 100 * n))} of {n}"
+
+
 def _main_section(report_bytes, bars_bytes, n_perm, seed, margin, capital_usd) -> None:
     try:
         result = _battery(report_bytes, bars_bytes, int(n_perm), int(seed), margin, capital_usd)
@@ -270,7 +278,8 @@ with st.sidebar:
                              key="capital_basis", help=_md(HELP["capital"]))
     capital_usd = None
     if capital_basis == "Fixed starting capital":
-        capital_usd = float(st.number_input("Starting capital, $", min_value=100.0, value=10_000.0, step=500.0, key="capital_usd_in"))
+        capital_usd = float(st.number_input("Starting capital, $", min_value=100.0, value=10_000.0, step=500.0, key="capital_usd_in",
+                                            help=_md(HELP["capital_usd"])))
     sample_report, sample_bars = os.environ.get("SR_SAMPLE_REPORT"), os.environ.get("SR_SAMPLE_BARS")
     use_sample = False
     if sample_report and sample_bars and Path(sample_report).exists() and Path(sample_bars).exists():
@@ -360,7 +369,7 @@ rows = []
 for w, pw, sw in zip(mw.wfc.windows, mw.plateau.windows, mw.selection.windows):
     rows.append({"window": w.label, "complete": "✓" if w.complete else "✗", "points": w.n_points, "Spearman ρ": round(w.spearman, 3),
                  "Pearson r": round(w.pearson, 3), "p": w.p_value if w.null.size else None, "positive OOS share": round(w.pos_oos_frac, 2),
-                 "quadrant": w.quadrant, "plateau (OOS)": round(pw.score_oos, 2), "pick deflated p": None if not math.isfinite(sw.p_pick) else sw.p_pick,
+                 "quadrant": w.quadrant, "plateau (OOS)": None if not math.isfinite(pw.score_oos) else round(pw.score_oos, 2), "pick deflated p": None if not math.isfinite(sw.p_pick) else sw.p_pick,
                  "pick IS rank %": None if not math.isfinite(w.pick_is_pct) else round(w.pick_is_pct), "pick OOS rank %": None if not math.isfinite(w.pick_oos_pct) else round(w.pick_oos_pct)})
 st.dataframe(rows, width="stretch", hide_index=True)
 usable = [w for w in mw.wfc.windows if w.complete and not w.insufficient]
@@ -376,15 +385,18 @@ wfc_lines = [(f"pooled over **{len(usable)} complete window(s)**: Spearman ρ = 
               f"positive OOS among positive-IS combinations **{mw.wfc.pooled_pos_oos_frac:.0%}** (gate ≥ 50%)") if usable else "no complete window with enough usable points"]
 for w in mw.wfc.windows:
     wfc_lines.append(f"{w.label}: ρ = {w.spearman:.2f} (Pearson {w.pearson:.2f}), {_p3(w.p_value) if w.null.size else 'too few points'}, "
-                     f"{w.n_points} points → *{w.quadrant}*; MultiWalk's pick ranked top {100 - w.pick_is_pct:.0f}% IS / top {100 - w.pick_oos_pct:.0f}% OOS"
+                     f"{w.n_points} points → *{w.quadrant}*; MultiWalk's pick: IS rank {_rank(w.pick_is_pct, w.n_points)}, OOS rank {_rank(w.pick_oos_pct, w.n_points)}"
                      if math.isfinite(w.pick_is_pct) else f"{w.label}: ρ = {w.spearman:.2f}, {w.n_points} points")
 if mw.wfc_np is not None and usable:
     wfc_lines.append(f"same test on net profit: pooled ρ = {mw.wfc_np.pooled_spearman:.2f}, {_p3(mw.wfc_np.pooled_p)}")
 card("wfc", wfc_verdict, wfc_lines, charts.fig_wfc_scatter(ww, metric_label), charts.fig_wfc_null(ww) if ww.null.size else None,
      extra=f"ρ = {mw.wfc.pooled_spearman:.2f}" if usable else "")
 
-pl_lines = [f"pooled plateau score **{mw.plateau.pooled_score:.2f}** over {mw.plateau.n_complete} complete window(s) (1 = flat and all neighbours profitable, 0 = spike)"]
+pl_lines = [f"pooled plateau score **{mw.plateau.pooled_score:.2f}** over {mw.plateau.n_complete} complete window(s) (1 = flat and all neighbours profitable, 0 = spike)"
+            if math.isfinite(mw.plateau.pooled_score) else "pooled plateau score n/a - no complete window has enough usable points"]
 for p in mw.plateau.windows:
+    if not math.isfinite(p.score_oos):
+        pl_lines.append(f"{p.label}: n/a - fewer than 2 usable points among the pick and its {p.n_neighbours} neighbours"); continue
     pl_lines.append(f"{p.label}: OOS score {p.score_oos:.2f} (flatness {p.flat_oos:.2f}, {p.positive_share_oos:.0%} of {p.n_neighbours} neighbours profitable); IS score {p.score_is:.2f}")
 card("plateau", "score", pl_lines, charts.fig_plateau(pw, mm["param_names"], mm["windows"][wi]["params"]),
      extra=f"{mw.plateau.pooled_score:.2f}" if math.isfinite(mw.plateau.pooled_score) else "")
@@ -394,6 +406,6 @@ for s in mw.selection.windows:
     if s.insufficient:
         se_lines.append(f"{s.label}: not run (incomplete window or too few in-sample days)"); continue
     se_lines.append(f"{s.label}: best of {s.n_iter} in-sample = combination {s.best_index + 1} at **${s.best_mean:,.1f}/day**, deflated {_p3(s.p_best)}; "
-                    f"MultiWalk's pick ${s.pick_mean:,.1f}/day, deflated {_p3(s.p_pick)}; effective independent variants ≈ **{s.n_eff:.0f}** of {s.n_iter}")
+                    f"MultiWalk's pick ${s.pick_mean:,.1f}/day, deflated {_p3(s.p_pick)}; effective independent variants ≈ **{s.n_eff:.1f}** of {s.n_iter}")
 card("selection", "reference", se_lines, charts.fig_selection(sw))
 st.download_button("Download MultiWalk results (JSON)", data=mw_to_json(mw), file_name="multiwalk_surface_results.json", mime="application/json")

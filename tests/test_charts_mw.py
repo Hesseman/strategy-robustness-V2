@@ -19,7 +19,7 @@ def test_multiwalk_figures_build():
 def test_copy_has_the_new_cards_and_help():
     from app.copy import CARDS, CONCEPT, HELP
     assert {"wfc", "plateau", "selection"} <= set(CARDS)
-    for k in ("report", "bars", "n_perm", "seed", "margin", "capital", "multiwalk", "mw_files"):
+    for k in ("report", "bars", "n_perm", "seed", "margin", "capital", "capital_usd", "multiwalk", "mw_files"):
         assert k in HELP and len(HELP[k]) > 40
     assert "iUseLegacyOptimizationTextFileFormat: true" in HELP["multiwalk"] and "Import Project Setup" in HELP["multiwalk"]
     assert "CDaR-80" in CONCEPT and "5 × CDaR-80" in CONCEPT

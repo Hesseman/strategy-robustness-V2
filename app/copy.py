@@ -65,6 +65,7 @@ HELP = {
     "seed": "Starting point of the random number generator. Same seed = same random draws = same p-values. Change it to check that a verdict does not hinge on one draw; it should not.",
     "margin": "The exchange's current margin per contract. Only the 'if deployed today' line uses it; it says nothing about the past.",
     "capital": "5 × CDaR-80 sizes the account from the strategy's own drawdown history. A fixed amount answers 'what if I trade this with $X': the annual % and the max-drawdown % of capital then use your number; CDaR-80 is still shown for reference.",
+    "capital_usd": "The account size used for the annual % and the max-drawdown % of capital, and for the margin line. CDaR-80 and 5 × CDaR-80 are still computed and shown.",
     "multiwalk": """**Needs MultiWalk Pro.** MultiWalk normally stores the optimisation results in a sealed `.dat` file. Switch the project to the readable text format once:
 
 1. Open `MultiWalkSetup.txt` in the project folder (next to `Optimization Files` and `Walkforward Files`) in Notepad and change `iUseLegacyOptimizationTextFileFormat: false` to `iUseLegacyOptimizationTextFileFormat: true`. Save.

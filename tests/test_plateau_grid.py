@@ -22,7 +22,8 @@ def test_score_hand_traced():
     assert share == 0.0 and flat == 0.0 and score == 0.0          # spike: neighbourhood mean < 0
     score, flat, share = plateau_score(np.array([10.0, 8.0, 12.0, -1.0]))
     assert share == pytest.approx(2 / 3) and 0 < flat < 1 and score == pytest.approx(0.5 * flat + 0.5 * share)
-    assert plateau_score(np.array([np.nan, 1.0])) == (0.0, 0.0, 0.0)
+    assert all(np.isnan(v) for v in plateau_score(np.array([np.nan, 1.0])))
+    assert all(np.isnan(v) for v in plateau_score(np.array([np.nan, np.nan, np.nan])))
 
 
 def test_persistent_surface_scores_higher_than_noise():
