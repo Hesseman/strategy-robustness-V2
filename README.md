@@ -91,8 +91,7 @@ You need nothing installed except Docker Desktop. No Python, no packages.
 
 ### 2. Get the code
 
-Open a terminal (PowerShell, Windows Terminal, or Git Bash) and run (published later; until
-then copy the folder):
+Open a terminal (PowerShell, Windows Terminal, or Git Bash) and run:
 
     git clone https://github.com/Hesseman/strategy-robustness-V2.git
     cd strategy-robustness-V2
