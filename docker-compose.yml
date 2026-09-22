@@ -1,7 +1,7 @@
 services:
   app:
     build: .
-    image: strategy-robustness
-    container_name: strategy-robustness
+    image: strategy-robustness-v2
+    container_name: strategy-robustness-v2
     ports:
-      - "127.0.0.1:8501:8501"
+      - "127.0.0.1:8502:8501"

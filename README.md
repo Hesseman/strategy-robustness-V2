@@ -1,4 +1,4 @@
-# Strategy Robustness App
+# Strategy Robustness App V2
 
 Upload a TradeStation **Strategy Performance Report** (saved as CSV) and the **bar data** the
 strategy ran on (Data Window export, same symbol and interval). The app joins the trade list
@@ -40,10 +40,11 @@ You need nothing installed except Docker Desktop. No Python, no packages.
 
 ### 2. Get the code
 
-Open a terminal (PowerShell, Windows Terminal, or Git Bash) and run:
+Open a terminal (PowerShell, Windows Terminal, or Git Bash) and run (published later; until
+then copy the folder):
 
-    git clone https://github.com/Hesseman/strategy-robustness.git
-    cd strategy-robustness
+    git clone https://github.com/Hesseman/strategy-robustness-V2.git
+    cd strategy-robustness-V2
 
 No Git? On the GitHub page click **Code → Download ZIP**, unzip it, and `cd` into the folder.
 
@@ -56,7 +57,7 @@ about 900 MB). Later runs reuse that work and start in seconds. The app is ready
 shows:
 
     You can now view your Streamlit app in your browser.
-    Local URL: http://localhost:8501
+    Local URL: http://localhost:8502
     Network URL: http://172.17.0.3:8501
     External URL: http://...:8501
 
@@ -66,7 +67,7 @@ work from your browser. Leave this terminal open: the app runs as long as the co
 
 ### 4. Open the app
 
-Go to **http://localhost:8501** in your browser. Upload the two TradeStation exports, or click
+Go to **http://localhost:8502** in your browser. Upload the two TradeStation exports, or click
 **Try the demo** in the sidebar. Nothing is written to disk; uploads live in memory for the
 session and are gone when the container stops.
 
@@ -89,7 +90,7 @@ image picks up the new code.
 
 Once the image exists (step 3 has run once), you can drive it from the GUI:
 
-- **Images** tab → `strategy-robustness` → **Run** → expand *Optional settings* → Host port
+- **Images** tab → `strategy-robustness-v2` → **Run** → expand *Optional settings* → Host port
   `8501` → **Run**.
 - **Containers** tab shows it running. Click the `8501:8501` port link to open the app, and
   use the **Stop** / **Start** buttons instead of steps 5 and 6.
@@ -101,29 +102,29 @@ all interfaces, so the app may be reachable from other machines on your network.
 
 On the machine that built it:
 
-    docker save -o strategy-robustness.tar strategy-robustness
+    docker save -o strategy-robustness-v2.tar strategy-robustness-v2
 
 Copy the `.tar` (about 900 MB) to the other machine, then there:
 
-    docker load -i strategy-robustness.tar
-    docker run --rm -p 127.0.0.1:8501:8501 strategy-robustness
+    docker load -i strategy-robustness-v2.tar
+    docker run --rm -p 127.0.0.1:8502:8501 strategy-robustness-v2
 
 ### Without compose
 
-    docker build -t strategy-robustness .
-    docker run --rm -p 127.0.0.1:8501:8501 strategy-robustness
+    docker build -t strategy-robustness-v2 .
+    docker run --rm -p 127.0.0.1:8502:8501 strategy-robustness-v2
 
 ### Run the test suite inside the image (no browser needed)
 
-    docker run --rm strategy-robustness python -m pytest -q
+    docker run --rm strategy-robustness-v2 python -m pytest -q
 
 ### If something goes wrong
 
 | Symptom | Cause and fix |
 |---|---|
 | `cannot connect to the Docker daemon` or `error during connect` | Docker Desktop is not running. Start it, wait for **Engine running**, retry. |
-| `port is already allocated` | Something else uses 8501. In `docker-compose.yml` change `127.0.0.1:8501:8501` to `127.0.0.1:8502:8501` and open http://localhost:8502. |
-| Browser says connection refused | The app has not finished starting, or you opened the Network/External URL. Wait for the "You can now view" line and use http://localhost:8501. |
+| `port is already allocated` | Something else uses 8502. In `docker-compose.yml` change `127.0.0.1:8502:8501` to `127.0.0.1:8503:8501` and open http://localhost:8503. |
+| Browser says connection refused | The app has not finished starting, or you opened the Network/External URL. Wait for the "You can now view" line and use http://localhost:8502. |
 | Code changes do not show up | Rebuild: `docker compose up --build`. |
 
 ## Develop

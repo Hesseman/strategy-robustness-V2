@@ -18,7 +18,7 @@ from robustness.bars_loader import BarsFormatError, load_bars  # noqa: E402
 from robustness.battery import ValidationFailed, run_battery, to_json  # noqa: E402
 from robustness.report_parser import ReportFormatError, parse_report  # noqa: E402
 
-st.set_page_config(page_title="Strategy Robustness", layout="wide")
+st.set_page_config(page_title="Strategy Robustness V2", layout="wide")
 
 PILL = {"pass": ("#2e8b57", "✓ PASS"), "fail": ("#c0392b", "✗ FAIL"), "score": ("#1f5fbf", "SCORE"),
         "reference": ("#9a9a94", "REFERENCE"), "insufficient": ("#9a9a94", "n < 30 - gate not applied")}
@@ -113,7 +113,7 @@ def card(key: str, verdict: str, result_lines: list[str], fig: go.Figure,
                 st.plotly_chart(fig2, width="stretch")
 
 
-st.title("Strategy Robustness")
+st.title("Strategy Robustness V2")
 st.write("Upload a TradeStation **Strategy Performance Report** (saved as CSV) and the **bar data** it ran on "
          "(Data Window export, same symbol and interval). Nothing is stored.")
 
