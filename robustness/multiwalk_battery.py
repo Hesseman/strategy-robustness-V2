@@ -59,7 +59,7 @@ def validate(grid: MultiWalkGrid, group: WFGroup) -> list[Check]:
                         + ("" if grid.is_full_grid else " - not a full product grid, the WFC null uses permutations"), severity="warn"))
     bad = []
     for w in group.windows:
-        if not (1 <= w.grid_row <= grid.n_iter) or not np.allclose(grid.params[w.grid_row - 1], w.params, atol=1e-9):
+        if not (1 <= w.grid_row <= grid.n_iter) or len(w.params) != grid.params.shape[1] or not np.allclose(grid.params[w.grid_row - 1], w.params, atol=1e-9):
             bad.append(f"row {w.grid_row} -> {w.params}")
     checks.append(Check("picks_on_grid", not bad, "every window's pick matches its grid row" if not bad else "mismatch: " + "; ".join(bad), severity="error"))
     checks.append(Check("windows_present", len(group.windows) > 0, f"{len(group.windows)} walk-forward windows", severity="error"))
@@ -73,7 +73,7 @@ def run_multiwalk_battery(grid: MultiWalkGrid, groups: list[WFGroup], *, group_n
                           n_boot: int = 500, seed: int = 0, min_trades: int = 10, alpha: float = 0.05) -> MultiWalkResult:
     """Run the three surface tests for one walk-forward group.
 
-    Accepts: the parsed grid and groups; group_no selects a group (default the first); n_null WFC
+    Accepts: the parsed grid and groups; group_no selects a group (default the first; an unknown number raises MultiWalkValidationFailed); n_null WFC
     null draws; n_boot Reality-Check draws; seed; min_trades - iterations with fewer closed
     trades in a window's IS or OOS are dropped from that window; alpha - WFC gate level.
     Returns: MultiWalkResult with meta, checks, windows, the WFC result on the project's fitness
@@ -81,7 +81,12 @@ def run_multiwalk_battery(grid: MultiWalkGrid, groups: list[WFGroup], *, group_n
     {'wfc': pass|fail|insufficient, 'plateau': 'score', 'selection': 'reference'}, gates 0/1 of 1.
     Guarantees: raises MultiWalkValidationFailed when an error-severity check fails; nothing
     downstream runs then; deterministic for a given seed."""
-    group = next((g for g in groups if g.group_no == group_no), groups[0]) if group_no is not None else groups[0]
+    if group_no is None:
+        group = groups[0]
+    else:
+        group = next((g for g in groups if g.group_no == group_no), None)
+        if group is None:
+            raise MultiWalkValidationFailed([Check("group_found", False, f"walk-forward group {group_no} is not in the database (groups: {[g.group_no for g in groups]})", severity="error")])
     checks = validate(grid, group)
     if any(not c.passed and c.severity == "error" for c in checks):
         raise MultiWalkValidationFailed(checks)

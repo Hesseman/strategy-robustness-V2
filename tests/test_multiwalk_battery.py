@@ -63,3 +63,29 @@ def test_json_export_is_finite_and_complete():
     d = json.loads(mw_to_json(r))
     assert set(d) >= {"meta", "checks", "wfc", "plateau", "selection", "verdicts", "gates_passed", "gates_total", "caveat"}
     assert d["wfc"]["windows"][0]["null"] is not None and "x" in d["wfc"]["windows"][0]
+
+
+def test_min_trades_drop_path_and_insufficient_verdict():
+    grid, groups, _ = _inputs("persistent", n_days=400)
+    r = run_multiwalk_battery(grid, groups, n_null=20, n_boot=10, min_trades=10**6)
+    assert r.verdicts["wfc"] == "insufficient" and r.gates_passed == 0
+    mt = next(c for c in r.checks if c.name == "min_trades")
+    assert not mt.passed and "[36]" in mt.detail
+    assert np.isnan(r.wfc.windows[0].x).all() and np.isnan(r.wfc.windows[0].y).all()
+
+
+def test_mismatched_parameter_count_is_a_validation_error_not_a_crash():
+    grid, groups, _ = _inputs("persistent", n_days=400)
+    groups[0].param_names = ["A", "B", "C"]
+    groups[0].windows[0].params = (1.0, 2.0, 3.0)
+    with pytest.raises(MultiWalkValidationFailed) as e:
+        run_multiwalk_battery(grid, groups, n_null=20, n_boot=10)
+    names = {c.name for c in e.value.checks if not c.passed}
+    assert {"param_names_match", "picks_on_grid"} <= names
+
+
+def test_unknown_group_no_is_a_validation_error():
+    grid, groups, _ = _inputs("persistent", n_days=400)
+    with pytest.raises(MultiWalkValidationFailed) as e:
+        run_multiwalk_battery(grid, groups, group_no=999, n_null=20, n_boot=10)
+    assert e.value.checks[0].name == "group_found"
