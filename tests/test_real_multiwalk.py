@@ -70,3 +70,15 @@ def test_drawdown_definitions_reproduce_multiwalks_report():
     assert abs(net - float(det["IS Net Profit"])) < 1.0
     assert abs(max_dd - float(det["IS Max DD"])) < 1.0
     assert abs(avg_dd - float(det["IS Avg DD"])) < 0.02 * abs(float(det["IS Avg DD"]))
+
+
+def test_real_battery_runs_and_prints(grid, groups):
+    from robustness.multiwalk_battery import run_multiwalk_battery
+    r = run_multiwalk_battery(grid, groups, n_null=999, n_boot=200, seed=0)
+    assert r.meta["n_complete"] == 2 and r.verdicts["wfc"] in ("pass", "fail")
+    w = r.wfc.windows
+    print("REAL MULTIWALK:", r.verdicts, "pooled rho=", round(r.wfc.pooled_spearman, 3), "p=", r.wfc.pooled_p,
+          "posOOS=", round(r.wfc.pooled_pos_oos_frac, 3), "| per window rho=", [round(x.spearman, 3) for x in w],
+          "p=", [x.p_value for x in w], "quadrant=", [x.quadrant for x in w],
+          "| plateau=", [round(p.score_oos, 2) for p in r.plateau.windows], "| p_pick=", [s.p_pick for s in r.selection.windows],
+          "n_eff=", [round(s.n_eff, 1) for s in r.selection.windows])
