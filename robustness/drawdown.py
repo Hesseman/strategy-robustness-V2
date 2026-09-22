@@ -122,6 +122,8 @@ class DrawdownResult:
     cdar80: float
     capital_mult: float
     capital: float
+    capital_basis: str
+    capital_5x_cdar80: float
     annual_pct: float
     max_dd_pct_of_capital: float
     sharpe: float
@@ -139,18 +141,24 @@ def _safe_div(a: float, b: float) -> float:
 
 
 def drawdown_analysis(usd_pc: np.ndarray, entry_times: pd.DatetimeIndex, exit_times: pd.DatetimeIndex,
-                      capital_mult: float = 5.0, beta: float = 0.80) -> DrawdownResult:
+                      capital_mult: float = 5.0, beta: float = 0.80,
+                      capital_override: float | None = None) -> DrawdownResult:
     """Compute drawdown episodes and all ranking/capital metrics on a trade sequence.
 
     Accepts: 1D array of per-trade P&L in USD (1 contract), entry_times and exit_times
       as DatetimeIndex (length must match usd_pc), capital_mult (scaling factor for CDaR-beta),
-      beta (quantile level, default 0.80).
+      beta (quantile level, default 0.80). capital_override - when given (must be > 0) it
+      replaces capital_mult x CDaR-beta as the capital used for annual_pct and
+      max_dd_pct_of_capital; capital_basis reads "fixed" then, else "5 x CDaR-80";
+      capital_5x_cdar80 always carries capital_mult x CDaR-beta. Raises ValueError for
+      capital_override <= 0.
 
     Returns: DrawdownResult dataclass with all 24 fields populated:
       - Trade counts, time spans, P&L totals
       - Equity curve (cumsum of P&L), times, episodes, depths
       - Risk metrics (max_dd, mean_dd, median_dd, cdar80)
-      - Capital sizing (capital_mult, capital, annual_pct, max_dd_pct_of_capital)
+      - Capital sizing (capital_mult, capital, capital_basis, capital_5x_cdar80, annual_pct,
+        max_dd_pct_of_capital)
       - Ranking metrics (sharpe, sortino, calmar, profit_over_avg_dd, profit_over_cdar80)
       - Duration metrics (peak-to-trough, peak-to-recovery, mean and max days)
       - Worst episode detail (peak_time, trough_time, recovery_time or None, depth)
@@ -183,7 +191,13 @@ def drawdown_analysis(usd_pc: np.ndarray, entry_times: pd.DatetimeIndex, exit_ti
     mean_dd = float(depths.mean()) if depths.size else 0.0
     median_dd = float(np.median(depths)) if depths.size else 0.0
     c80 = cdar(depths, beta)
-    capital = capital_mult * c80
+    capital_5x = capital_mult * c80
+    if capital_override is not None:
+        if not capital_override > 0:
+            raise ValueError("capital_override must be > 0")
+        capital, basis = float(capital_override), "fixed"
+    else:
+        capital, basis = float(capital_5x), "5 x CDaR-80"
     annual_usd = float(pnl.sum() / years)
     pt = [(_t(e["trough_i"]) - _t(e["peak_i"])).days for e in eps]
     pr = [(_t(e["recovery_i"]) - _t(e["peak_i"])).days for e in eps if e["recovery_i"] is not None]
@@ -196,7 +210,8 @@ def drawdown_analysis(usd_pc: np.ndarray, entry_times: pd.DatetimeIndex, exit_ti
         equity=equity, times=times, episodes=eps, depths=depths, n_episodes=len(eps),
         n_unrecovered=sum(1 for e in eps if e["recovery_i"] is None),
         max_dd=max_dd, mean_dd=mean_dd, median_dd=median_dd, cdar80=c80, capital_mult=capital_mult,
-        capital=float(capital), annual_pct=_safe_div(annual_usd, capital),
+        capital=float(capital), capital_basis=basis, capital_5x_cdar80=float(capital_5x),
+        annual_pct=_safe_div(annual_usd, capital),
         max_dd_pct_of_capital=_safe_div(max_dd, capital),
         sharpe=sharpe(pnl, years), sortino=sortino(pnl, years), calmar=_safe_div(annual_usd, max_dd),
         profit_over_avg_dd=_safe_div(annual_usd, mean_dd), profit_over_cdar80=_safe_div(annual_usd, c80),

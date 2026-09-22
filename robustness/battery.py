@@ -50,7 +50,8 @@ class BatteryResult:
 
 
 def run_battery(report: ParsedReport, bars: pd.DataFrame, *, n_perm: int = 1000, seed: int = 0,
-                today_margin_usd: float | None = None, min_trades: int = 30) -> BatteryResult:
+                today_margin_usd: float | None = None, min_trades: int = 30,
+                capital_usd: float | None = None) -> BatteryResult:
     """Run everything: join the report's trades to bars, then the random-entry null (T8a),
     temporal robustness (T3), cost stress (T7) and the drawdown/capital card, and derive a
     verdict per card. Gates read 'insufficient' below min_trades; everything is still
@@ -61,7 +62,9 @@ def run_battery(report: ParsedReport, bars: pd.DataFrame, *, n_perm: int = 1000,
     (same seed -> same null draw and p-value); today_margin_usd - optional current
     exchange margin in USD; today_margin_usd=None omits the margin line; any float,
     including 0.0, computes it; min_trades - the trade-count floor below which the
-    t8a/t7 gate verdicts read 'insufficient' (every test still runs and is reported).
+    t8a/t7 gate verdicts read 'insufficient' (every test still runs and is reported);
+    capital_usd - optional fixed starting capital in USD replacing 5 x CDaR-80 for the
+    drawdown card's percentages and the margin line.
 
     Returns: a BatteryResult carrying the run's meta (symbol/root/interval/trade counts/
     the n_perm and seed used), the join's checks, the raw result of each of the five
@@ -94,7 +97,7 @@ def run_battery(report: ParsedReport, bars: pd.DataFrame, *, n_perm: int = 1000,
     else:
         cost, source = ref, "multiwalk"
     t7 = cost_stress(usd, baseline_usd, cost, source, ts_cost_rt_usd=ts_cost)
-    dd = drawdown_analysis(usd, pd.DatetimeIndex(t.entry_time), pd.DatetimeIndex(t.exit_time))
+    dd = drawdown_analysis(usd, pd.DatetimeIndex(t.entry_time), pd.DatetimeIndex(t.exit_time), capital_override=capital_usd)
     margin = margin_check(dd.capital, today_margin_usd) if today_margin_usd is not None else None
 
     enough = len(t) >= min_trades
@@ -110,7 +113,8 @@ def run_battery(report: ParsedReport, bars: pd.DataFrame, *, n_perm: int = 1000,
             "point_value": joined.point_value, "cost_basis": joined.cost_basis,
             "n_bars": int(len(bars)), "bar_interval": str(infer_interval(bars)),
             "bars_start": bars.index[0], "bars_end": bars.index[-1],
-            "n_perm": n_perm, "seed": seed, "min_trades": min_trades, "warnings": list(report.warnings)}
+            "n_perm": n_perm, "seed": seed, "min_trades": min_trades, "capital_usd": capital_usd,
+            "warnings": list(report.warnings)}
     return BatteryResult(meta=meta, checks=joined.checks, baseline=t8a, t3=t3, t7=t7, dd=dd, margin=margin,
                          verdicts=verdicts, gates_passed=sum(1 for k in ("t8a", "t7") if verdicts[k] == "pass"),
                          gates_total=2, caveat=CAVEAT)

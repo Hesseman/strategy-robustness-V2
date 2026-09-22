@@ -67,3 +67,24 @@ def test_drawdown_analysis_orders_by_exit_time():
 def test_margin_check():
     m = margin_check(1600.0, 200.0)
     assert m == {"today_margin_usd": 200.0, "capital_usd": 1600.0, "margin_to_equity": 0.125, "contracts_covered": 8.0}
+
+
+def test_capital_override_changes_the_denominator_only():
+    import numpy as np, pandas as pd
+    from robustness.drawdown import drawdown_analysis
+    pnl = np.array([100.0, -60.0, 80.0, -40.0, 120.0, -30.0])
+    t = pd.DatetimeIndex(pd.date_range("2024-01-01", periods=6, freq="7D"))
+    a = drawdown_analysis(pnl, t, t + pd.Timedelta(days=1))
+    b = drawdown_analysis(pnl, t, t + pd.Timedelta(days=1), capital_override=10_000.0)
+    assert a.capital_basis == "5 x CDaR-80" and a.capital == a.capital_5x_cdar80 == 5 * a.cdar80
+    assert b.capital_basis == "fixed" and b.capital == 10_000.0 and b.capital_5x_cdar80 == a.capital_5x_cdar80
+    assert b.cdar80 == a.cdar80 and b.annual_usd == a.annual_usd
+    assert b.annual_pct == pytest.approx(b.annual_usd / 10_000.0) and b.max_dd_pct_of_capital == pytest.approx(b.max_dd / 10_000.0)
+
+
+def test_capital_override_must_be_positive():
+    import numpy as np, pandas as pd
+    from robustness.drawdown import drawdown_analysis
+    t = pd.DatetimeIndex(pd.date_range("2024-01-01", periods=3, freq="7D"))
+    with pytest.raises(ValueError):
+        drawdown_analysis(np.array([1.0, 2.0, 3.0]), t, t, capital_override=0.0)

@@ -120,3 +120,11 @@ def test_zero_margin_is_a_value_not_absence():
     r = _battery(planted_edge=False, n=40, today_margin_usd=0.0)
     assert r.margin is not None
     assert r.margin["today_margin_usd"] == 0.0 and r.margin["margin_to_equity"] == 0.0
+
+
+def test_battery_capital_usd_reaches_the_drawdown_card_and_margin():
+    r = _battery(planted_edge=True, capital_usd=25_000.0, today_margin_usd=2_000.0)
+    assert r.dd.capital_basis == "fixed" and r.dd.capital == 25_000.0 and r.meta["capital_usd"] == 25_000.0
+    assert r.margin["contracts_covered"] == pytest.approx(25_000.0 / 2_000.0)
+    r0 = _battery(planted_edge=True)
+    assert r0.dd.capital_basis == "5 x CDaR-80" and r0.meta["capital_usd"] is None
