@@ -95,12 +95,25 @@ What the three cards mean:
 - **WFC (Walk Forward Correlation)** — gate: whether in-sample results predicted
   out-of-sample results across the whole parameter grid, not just for the one combination
   MultiWalk picked; pooled p < 0.05 and at least half of the in-sample-positive combinations
-  stayed positive out-of-sample.
+  stayed positive out-of-sample. When the combinations are nearly identical (fewer than 3
+  effective independent variants) a low correlation cannot tell over-fitting from "nothing to
+  rank", so the card reads **not informative** and the gate is not applied. Tabs: a scatter,
+  a ranked profile (combinations sorted by in-sample result, in-sample rank as a line and
+  out-of-sample rank as dots on the same chart), bands (100+ combinations: mean out-of-sample
+  result per tenth of the in-sample ranking) and the null; the top in-sample combinations are
+  outlined in red.
 - **Plateau** — score 0–1: whether the chosen parameter set sits on a plateau of neighbours
   that also worked out-of-sample (flat and positive), or on an isolated spike (0 = spike).
 - **Selection haircut** — reference: how much of the best-of-N in-sample result a
   block-bootstrap null with no real edge would produce anyway, just from trying many
   combinations.
+
+**Walk-forward windows.** By default the cards use the project's own walk-forward schedule and
+MultiWalk's pick in each window. With few trades per window (a daily strategy on 1-year
+windows has about 15), choose **2 windows** (the history in three equal parts: first → second,
+second → third) or **1 split** (halves); the pick is then the best in-sample combination. The
+window table shows the median trades per combination in and out of sample. Decide before you
+look at the result - picking the split that passes is one more way to fit the data.
 
 These tests know how many variants this one optimisation tried. They know nothing about
 other strategies, other symbols, or other parameter grids you may have tried elsewhere — they

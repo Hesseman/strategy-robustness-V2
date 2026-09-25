@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 
 from robustness.cost_stress import CostStressResult
@@ -11,9 +12,10 @@ from robustness.plateau_grid import PlateauWindow
 from robustness.selection import SelectionWindow
 from robustness.temporal import TemporalResult
 from robustness.timing import DelayCurve
-from robustness.wfc_grid import WFCWindow
+from robustness.wfc_grid import Band, WFCWindow
 
 ACCENT, MUTED, GREEN, RED, PALE = "#1f5fbf", "#9a9a94", "#2e8b57", "#c0392b", "#dfe7f5"
+ORANGE = "#e08a1e"
 _LAYOUT = dict(template="plotly_white", margin=dict(l=40, r=20, t=20, b=40), height=320, showlegend=False)
 
 
@@ -88,16 +90,73 @@ def fig_episode_hist(dd: DrawdownResult) -> go.Figure:
     return fig
 
 
-def fig_wfc_scatter(w: WFCWindow, metric_label: str, pick_label: str = "MultiWalk's pick") -> go.Figure:
+def fig_wfc_scatter(w: WFCWindow, metric_label: str, pick_label: str = "MultiWalk's pick", top: list[int] | None = None) -> go.Figure:
     """In-sample vs out-of-sample metric per parameter combination, the window's pick highlighted
-    (named pick_label), zero lines."""
+    (named pick_label), the top in-sample combinations (iteration indices) outlined red, zero lines."""
     m = np.isfinite(w.x) & np.isfinite(w.y)
     fig = go.Figure(go.Scatter(x=w.x[m], y=w.y[m], mode="markers", marker=dict(color=MUTED, size=7, opacity=0.75), name="combinations"))
+    if top:
+        fig.add_trace(go.Scatter(x=w.x[top], y=w.y[top], mode="markers", name=f"top {len(top)} in-sample",
+                                 marker=dict(size=13, color="rgba(0,0,0,0)", line=dict(color=RED, width=2))))
     if np.isfinite(w.x[w.pick_index]) and np.isfinite(w.y[w.pick_index]):
         fig.add_trace(go.Scatter(x=[w.x[w.pick_index]], y=[w.y[w.pick_index]], mode="markers",
                                  marker=dict(color=RED, size=13, symbol="diamond"), name=pick_label))
     fig.add_hline(y=0, line_color=ACCENT, line_width=1); fig.add_vline(x=0, line_color=ACCENT, line_width=1)
     fig.update_layout(**_LAYOUT, xaxis_title=f"in-sample {metric_label}", yaxis_title=f"out-of-sample {metric_label}")
+    return fig
+
+
+def _pct_rank(v: np.ndarray) -> np.ndarray:
+    """Percentile rank within v (0 = worst, 100 = best; average ranks for ties); v finite."""
+    return (pd.Series(v).rank().to_numpy() - 1.0) / max(1, v.size - 1) * 100.0
+
+
+def fig_wfc_profile(w: WFCWindow, metric_label: str, top: list[int], labels: list[str] | None = None) -> go.Figure:
+    """Ranked profile, in and out of sample on one chart: the combinations finite on both sides,
+    sorted by in-sample result (best on the left). Both sides are percentile ranks within the
+    window (100 = best), so windows of different lengths and ratio metrics compare: the in-sample
+    rank is the falling blue line, the out-of-sample rank of the same combination an orange dot
+    (hollow when it lost money out-of-sample) with a rolling mean - if the orange follows the blue
+    down, the ranking held. The top in-sample combinations (iteration indices) are outlined red;
+    hover shows the real values and, with `labels` (one per iteration), the parameters."""
+    idx = np.flatnonzero(np.isfinite(w.x) & np.isfinite(w.y))
+    fig = go.Figure()
+    if idx.size == 0:
+        fig.update_layout(**_LAYOUT)
+        return fig
+    order = idx[np.argsort(-w.x[idx], kind="stable")]
+    xs = np.arange(1, order.size + 1)
+    is_pct, oos_pct = _pct_rank(w.x[order]), _pct_rank(w.y[order])
+    name = [labels[i] if labels else f"combination {i + 1}" for i in order]
+    hover = [f"{nm}<br>in-sample {w.x[i]:,.2f} (rank {r:.0f}%)<br>out-of-sample {w.y[i]:,.2f} (rank {o:.0f}%)"
+             for nm, i, r, o in zip(name, order, is_pct, oos_pct)]
+    fig.add_trace(go.Scatter(x=xs, y=is_pct, mode="lines", line=dict(color=ACCENT, width=2), name="in-sample rank",
+                             hoverinfo="skip"))
+    fig.add_trace(go.Scatter(x=xs, y=oos_pct, mode="markers", name="out-of-sample rank", hovertext=hover, hoverinfo="text",
+                             marker=dict(color=ORANGE, size=8, symbol=["circle" if w.y[i] > 0 else "circle-open" for i in order],
+                                         line=dict(color=ORANGE, width=1.5))))
+    fig.add_trace(go.Scatter(x=xs, y=pd.Series(oos_pct).rolling(max(3, order.size // 10), center=True, min_periods=1).mean(),
+                             mode="lines", line=dict(color=ORANGE, width=2, dash="dash"), name="out-of-sample, rolling mean",
+                             hoverinfo="skip"))
+    pos = {i: p for p, i in enumerate(order)}
+    tp = [pos[i] for i in top if i in pos]
+    fig.add_trace(go.Scatter(x=xs[tp], y=oos_pct[tp], mode="markers", name=f"top {len(tp)} in-sample", hoverinfo="skip",
+                             marker=dict(size=14, color="rgba(0,0,0,0)", line=dict(color=RED, width=2))))
+    fig.update_layout(**_LAYOUT, xaxis_title=f"combinations sorted by in-sample {metric_label}, best first",
+                      yaxis_title="rank within the window, % (100 = best)", yaxis_range=[-4, 104])
+    fig.update_layout(showlegend=True, legend=dict(orientation="h", y=1.18, x=0), margin=dict(l=40, r=20, t=50, b=40))
+    return fig
+
+
+def fig_wfc_bands(bands: list[Band], metric_label: str) -> go.Figure:
+    """Mean out-of-sample metric per in-sample band (1 = best tenth) with +/- 1 standard error and
+    the share of profitable combinations as text; a falling staircase means the ranking held."""
+    fig = go.Figure(go.Bar(x=[str(b.band) for b in bands], y=[b.oos_mean for b in bands],
+                           error_y=dict(type="data", array=[b.oos_se if np.isfinite(b.oos_se) else 0.0 for b in bands]),
+                           marker_color=[GREEN if b.oos_mean > 0 else RED for b in bands],
+                           text=[f"{b.oos_pos_share:.0%} >0" for b in bands], textposition="outside"))
+    fig.add_hline(y=0, line_color=MUTED)
+    fig.update_layout(**_LAYOUT, xaxis_title="in-sample band (1 = best tenth)", yaxis_title=f"mean out-of-sample {metric_label}")
     return fig
 
 

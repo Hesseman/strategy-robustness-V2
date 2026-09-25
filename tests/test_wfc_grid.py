@@ -5,7 +5,7 @@ from robustness.multiwalk_text import parse_multiwalk_text
 from robustness.surface import metric_values, window_metrics
 from robustness.synthetic_multiwalk import make_multiwalk, make_walkforward_db
 from robustness.walkforward_db import parse_walkforward_db
-from robustness.wfc_grid import pearson, spearman, wfc_test, wfc_window
+from robustness.wfc_grid import WFCWindow, pearson, spearman, top_n_default, top_n_summary, wfc_bands, wfc_test, wfc_window
 from robustness.windows import derive_windows
 
 AX = {"A": list(range(6)), "B": list(range(6))}
@@ -80,3 +80,37 @@ def test_window_null_correlates_over_all_pairs_finite_after_the_shift():
     yn = np.where(np.isfinite(y), y, np.nan)
     expected = np.array([spearman(x, sh.apply(yn, s, rng)) for s in sh.all_shifts(rng, 199)])
     assert np.allclose(w.null, expected)
+
+
+def _ww(x, y):
+    """A WFCWindow carrying only x/y; the other fields are placeholders."""
+    x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+    return WFCWindow(index=1, label="w", complete=True, n_points=int(np.isfinite(x).sum()), n_dropped=0, x=x, y=y,
+                     spearman=0.0, pearson=0.0, n_pos_is=0, pos_oos_frac=0.0, p_value=1.0, null=np.empty(0), pick_index=0,
+                     pick_is_pct=float("nan"), pick_oos_pct=float("nan"), quadrant="", insufficient=False)
+
+
+def test_top_n_summary_finds_where_the_best_in_sample_landed():
+    x = np.arange(1.0, 13.0)
+    t = top_n_summary(_ww(x, x[::-1]), 4)                # the in-sample best are the out-of-sample worst
+    assert t.n == 4 and t.indices == [11, 10, 9, 8] and t.n_valid == 12
+    assert t.median_oos_rank == 10.5 and t.n_positive_oos == 4
+    assert top_n_summary(_ww(x, x[::-1] - 6.5), 4).n_positive_oos == 0
+    x2 = x.copy(); x2[0] = np.nan
+    t2 = top_n_summary(_ww(x2, x))
+    assert t2.n_valid == 11 and t2.n == top_n_default(11) == 3 and t2.indices == [11, 10, 9] and t2.median_oos_rank == 2.0
+    assert top_n_default(240) == 10 and top_n_default(28) == 9 and top_n_default(2) == 1
+    empty = top_n_summary(_ww([np.nan] * 3, [1.0, 2.0, 3.0]))
+    assert empty.n == 0 and empty.indices == [] and np.isnan(empty.median_oos_rank)
+
+
+def test_wfc_bands_cover_every_valid_point_once():
+    rng = np.random.default_rng(3)
+    x = rng.normal(size=27); x[5] = np.nan
+    y = x * 2 + rng.normal(size=27)
+    bands = wfc_bands(_ww(x, y), 10)
+    assert [b.band for b in bands] == list(range(1, 11)) and sum(b.n for b in bands) == 26
+    assert max(b.n for b in bands) - min(b.n for b in bands) <= 1
+    assert bands[0].is_mean == max(b.is_mean for b in bands) and bands[0].oos_mean > bands[-1].oos_mean
+    assert all(0.0 <= b.oos_pos_share <= 1.0 for b in bands)
+    assert wfc_bands(_ww(x[:8], y[:8]), 10) == []

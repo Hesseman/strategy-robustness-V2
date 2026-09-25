@@ -100,6 +100,9 @@ def test_app_renders_multiwalk_section_on_sample(tmp_path, monkeypatch):
     joined = "\n".join(el.value for el in at.markdown)
     assert "Walk Forward Correlation" in joined and "Plateau" in joined and "Selection haircut" in joined
     assert "PASS" in joined or "FAIL" in joined
+    tabs = [t.label for t in at.tabs]
+    assert "Scatter" in tabs and "Ranked profile" in tabs and "Bands" not in tabs   # 20 combinations: no bands
+    assert "top 6 in-sample → median out-of-sample rank" in joined
     import re
     assert re.search(r"(?<!\\)\$\d", joined) is None, "an unescaped dollar amount reached st.markdown"
 

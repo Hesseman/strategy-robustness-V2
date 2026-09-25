@@ -22,6 +22,7 @@ from robustness.multiwalk_battery import NEFF_MIN, MultiWalkValidationFailed, mw
 from robustness.multiwalk_text import MultiWalkFormatError, parse_multiwalk_text  # noqa: E402
 from robustness.report_parser import ReportFormatError  # noqa: E402
 from robustness.walkforward_db import WalkforwardDBError, parse_walkforward_db  # noqa: E402
+from robustness.wfc_grid import top_n_summary, wfc_bands  # noqa: E402
 import glob  # noqa: E402
 
 st.set_page_config(page_title="Strategy Robustness V2", layout="wide")
@@ -89,10 +90,11 @@ def _p_text(k_ge: int, p: float) -> str:
     return f"p = {p:.3f}"
 
 
-def card(key: str, verdict: str, result_lines: list[str], fig: go.Figure,
-         fig2: go.Figure | None = None, extra: str = "") -> None:
+def card(key: str, verdict: str, result_lines: list[str], fig: go.Figure | None = None,
+         fig2: go.Figure | None = None, extra: str = "", tabs: dict[str, go.Figure] | None = None) -> None:
     """Accepts a key from CARDS, its verdict, the result bullet lines and one or two
-    plotly figures; renders one bordered card (copy and pill left, charts right).
+    plotly figures - or `tabs` ({tab label: figure}), shown as tabs instead; renders one
+    bordered card (copy and pill left, charts right).
     Returns nothing; guarantees the card order and layout are identical for every test."""
     c = CARDS[key]
     with st.container(border=True):
@@ -107,9 +109,14 @@ def card(key: str, verdict: str, result_lines: list[str], fig: go.Figure,
                 st.markdown(f"- {line.replace('$', chr(92) + '$')}")
             st.markdown(pill(verdict, extra), unsafe_allow_html=True)
         with right:
-            st.plotly_chart(fig, width="stretch")
-            if fig2 is not None:
-                st.plotly_chart(fig2, width="stretch")
+            if tabs:
+                for tab, f in zip(st.tabs(list(tabs)), tabs.values()):
+                    with tab:
+                        st.plotly_chart(f, width="stretch")
+            else:
+                st.plotly_chart(fig, width="stretch")
+                if fig2 is not None:
+                    st.plotly_chart(fig2, width="stretch")
 
 
 def _md(s: str) -> str:
@@ -401,14 +408,24 @@ if math.isfinite(mm["n_eff_median"]):
                      f"below {NEFF_MIN:g} a low correlation says nothing about over-fitting and the gate is not applied")
 for w, wm, sw_ in zip(mw.wfc.windows, mm["windows"], mw.selection.windows):
     trades_txt = f"~{wm['is_trades_median']}/{wm['oos_trades_median']} trades per combination in/out"
+    tn = top_n_summary(w)
+    top_txt = (f"; top {tn.n} in-sample → median out-of-sample rank {tn.median_oos_rank:.0f} of {tn.n_valid}, "
+               f"{tn.n_positive_oos} of {tn.n} profitable" if tn.n else "")
     wfc_lines.append(f"{w.label}: ρ = {w.spearman:.2f} (Pearson {w.pearson:.2f}), {_p3(w.p_value) if w.null.size else 'too few points'}, "
                      f"{w.n_points} points, {trades_txt} → *{wfc_quadrant(w, sw_.n_eff)}*; {pick_label}: IS rank {_rank(w.pick_is_pct, w.n_points)}, "
-                     f"OOS rank {_rank(w.pick_oos_pct, w.n_points)}"
+                     f"OOS rank {_rank(w.pick_oos_pct, w.n_points)}{top_txt}"
                      if math.isfinite(w.pick_is_pct) else f"{w.label}: ρ = {w.spearman:.2f}, {w.n_points} points, {trades_txt}")
 if mw.wfc_np is not None and usable:
     wfc_lines.append(f"same test on net profit: pooled ρ = {mw.wfc_np.pooled_spearman:.2f}, {_p3(mw.wfc_np.pooled_p)}")
-card("wfc", wfc_verdict, wfc_lines, charts.fig_wfc_scatter(ww, metric_label, pick_label=pick_label), charts.fig_wfc_null(ww) if ww.null.size else None,
-     extra=f"ρ = {mw.wfc.pooled_spearman:.2f}" if usable else "")
+top_ww = top_n_summary(ww)
+param_labels = [" / ".join(f"{n}={v:g}" for n, v in zip(mm["param_names"], row)) for row in _mw_grid(txt_bytes).params]
+wfc_tabs = {"Scatter": charts.fig_wfc_scatter(ww, metric_label, pick_label=pick_label, top=top_ww.indices),
+            "Ranked profile": charts.fig_wfc_profile(ww, metric_label, top_ww.indices, labels=param_labels)}
+if top_ww.n_valid >= 100:   # below that the ranked profile already shows every point
+    wfc_tabs["Bands"] = charts.fig_wfc_bands(wfc_bands(ww), metric_label)
+if ww.null.size:
+    wfc_tabs["Null"] = charts.fig_wfc_null(ww)
+card("wfc", wfc_verdict, wfc_lines, tabs=wfc_tabs, extra=f"ρ = {mw.wfc.pooled_spearman:.2f}" if usable else "")
 
 pl_lines = [f"pooled plateau score **{mw.plateau.pooled_score:.2f}** over {mw.plateau.n_complete} complete window(s) (1 = flat and all neighbours profitable, 0 = spike)"
             if math.isfinite(mw.plateau.pooled_score) else "pooled plateau score n/a - no complete window has enough usable points"]
