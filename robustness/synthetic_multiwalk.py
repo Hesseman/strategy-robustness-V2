@@ -2,7 +2,8 @@
 and a matching WalkforwardData.db, written in the exact layouts that multiwalk_text and
 walkforward_db read. Structure 'persistent' plants a smooth bump on the grid that is the same
 in-sample and out-of-sample; 'noise' plants nothing; 'decay' flips the bump's sign after the
-split. Trading days are weekdays from 2020-01-06."""
+split. Trading days are weekdays from 2020-01-06. make_planted_grid builds a MultiWalkGrid directly
+(no text round trip) with correlated neighbour noise, for the null-size and power oracles."""
 from __future__ import annotations
 
 import itertools
@@ -12,6 +13,8 @@ import tempfile
 
 import numpy as np
 import pandas as pd
+
+from robustness.multiwalk_text import MultiWalkGrid
 
 _PERIOD_DAY = 7
 _FITNESS_NPAVGDD = 6
@@ -79,6 +82,55 @@ def make_multiwalk(axes: dict[str, list[float]], n_days: int = 600, seed: int = 
                 "windows": [{"oos_start": dates[split].strftime("%Y%m%d"), "oos_end": dates[-1].strftime("%Y%m%d"),
                              "params": tuple(values[j][pos[best, j]] for j in range(len(names))), "grid_row": best + 1}]}
     return "\n".join(lines) + "\n", schedule
+
+
+PLANTED = ("noise", "ridge", "persistent", "decay")
+
+
+def make_planted_grid(shape: tuple[int, ...] = (6, 6), *, structure: str = "noise", rho: float = 0.9, trade_p: float = 0.2,
+                      n_days: int = 600, split: int | None = None, signal: float = 0.3, seed: int = 0) -> MultiWalkGrid:
+    """A planted-truth optimisation grid whose neighbouring cells share most of their noise, as real
+    neighbouring parameter sets share most of their trades (docs/research/2026-09-25-wfc-region-
+    concordance.md § 4). Every cell trades on the same days (probability trade_p per day); per trade
+    $ P&L = 100 x (mu(cell) x factor(day) + noise), noise = sqrt(rho) x a field smoothed over the grid
+    (Chebyshev radius 2) + sqrt(1 - rho) x the cell's own noise; rounded to cents.
+
+    Accepts: shape; structure in PLANTED - 'noise' (mu = 0), 'ridge' (a narrow bump covering about a
+    fifth of an otherwise flat grid), 'persistent' (a wide bump, positive centre and negative rim) or
+    'decay' (the wide bump with its sign flipped from day `split`, default 2/3 of n_days); rho in
+    [0, 1]; trade_p; n_days; signal = mu at the bump's peak, in units of the noise SD; seed.
+    Returns: a MultiWalkGrid on weekdays from 2020-01-06 (last axis varies fastest; params = grid
+    positions); closed P&L = daily P&L, one exit per trading day.
+    Guarantees: deterministic for a seed; a 'noise' grid does not depend on signal or split; raises
+    ValueError for another structure."""
+    if structure not in PLANTED:
+        raise ValueError(f"structure must be one of {PLANTED}, got {structure!r}")
+    rng = np.random.default_rng(seed)
+    pos = np.array(list(itertools.product(*[range(s) for s in shape])), dtype=int)
+    n = len(pos)
+    trade_day = rng.random(n_days) < trade_p
+    white = rng.normal(size=(n, n_days))
+    d = np.abs(pos[:, None, :] - pos[None, :, :]).max(axis=2)
+    field = np.stack([white[d[i] <= 2].mean(axis=0) for i in range(n)])
+    field /= field.std(axis=1, keepdims=True)
+    noise = np.sqrt(rho) * field + np.sqrt(1 - rho) * rng.normal(size=(n, n_days))
+    mu, factor = np.zeros(n), np.ones(n_days)
+    if structure != "noise":   # the bump's centre comes from its own stream, so the noise above is shared by every structure
+        centre = np.array([np.random.default_rng([seed, 1]).uniform(0.3, 0.7) * (s - 1) for s in shape])
+        if structure == "ridge":
+            width = np.array([max(0.7, 0.28 * (s - 1)) for s in shape])
+            mu = signal * np.exp(-(((pos - centre) / width) ** 2).sum(axis=1))
+        else:
+            width = np.array([max(1.0, 0.6 * (s - 1)) for s in shape])
+            mu = signal * (np.exp(-(((pos - centre) / width) ** 2).sum(axis=1)) - 0.45)
+        if structure == "decay":
+            factor[(int(n_days * 2 / 3) if split is None else int(split)):] = -1.0
+    daily = np.round(100.0 * trade_day[None, :] * (mu[:, None] * factor[None, :] + noise), 2)
+    dates = pd.bdate_range("2020-01-06", periods=n_days)
+    ed = dates.values[trade_day].astype("datetime64[D]")
+    return MultiWalkGrid(param_names=[f"p{k}" for k in range(len(shape))], params=pos.astype(float),
+                         axes=[np.arange(s, dtype=float) for s in shape], grid_pos=pos, dates=dates, daily_pnl=daily,
+                         closed_pnl=daily.copy(), exit_dates=[ed] * n, exit_pnl=[daily[i, trade_day] for i in range(n)])
 
 
 def make_walkforward_db(schedule: dict) -> bytes:
