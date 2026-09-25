@@ -1,4 +1,4 @@
-"""Plotly figures for the five cards. No Streamlit here."""
+"""Plotly figures for the cards and the timing-sensitivity section. No Streamlit here."""
 from __future__ import annotations
 
 import numpy as np
@@ -10,6 +10,7 @@ from robustness.null_entry import RandomEntryResult
 from robustness.plateau_grid import PlateauWindow
 from robustness.selection import SelectionWindow
 from robustness.temporal import TemporalResult
+from robustness.timing import DelayCurve
 from robustness.wfc_grid import WFCWindow
 
 ACCENT, MUTED, GREEN, RED, PALE = "#1f5fbf", "#9a9a94", "#2e8b57", "#c0392b", "#dfe7f5"
@@ -126,4 +127,38 @@ def fig_selection(s: SelectionWindow) -> go.Figure:
     if np.isfinite(s.pick_mean):
         fig.add_vline(x=s.pick_mean, line_color=RED, line_width=2, annotation_text=f"pick {s.pick_mean:,.1f}", annotation_position="bottom")
     fig.update_layout(**_LAYOUT, xaxis_title="best mean daily $ across the grid under no edge", yaxis_title=f"count of {s.null_max.size} resamples")
+    return fig
+
+
+def fig_delay_curve(curve: DelayCurve, point_value_label: str, early: DelayCurve | None = None) -> go.Figure:
+    """Gross $ over alive trades vs shift in bars (k = 0 = as reported, in ACCENT), with the mean %
+    return per trade on a right-hand axis; hover shows how many trades are still alive. With
+    `early` (the same leg moved earlier) the x axis runs -max_k..+max_k and the negative,
+    hindsight side is shaded and drawn with open markers."""
+    pts = ([(-p.k, p, True) for p in reversed(early.points[1:])] if early is not None else []) + \
+          [(p.k, p, False) for p in curve.points]
+    ks = [k for k, _, _ in pts]
+    usd = [p.total_usd for _, p, _ in pts]
+    pct = [p.mean_pct * 100 for _, p, _ in pts]
+    hover = [(f"{-k} bar(s) earlier (hindsight)" if e else f"k = {k}") +
+             f": ${p.total_usd:,.0f} gross, mean {p.mean_pct*100:+.3f}% per trade, {p.n_alive} alive / {p.n_skipped} skipped"
+             for k, p, e in pts]
+    colors = [ACCENT if k == 0 else MUTED for k in ks]
+    symbols = ["circle-open" if e else "circle" for _, _, e in pts]
+    sizes = [12 if k == 0 else 8 for k in ks]
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=ks, y=usd, mode="lines+markers", line_color=MUTED, hovertext=hover, hoverinfo="text",
+                             marker=dict(size=sizes, color=colors, symbol=symbols, line=dict(width=2, color=colors))))
+    fig.add_trace(go.Scatter(x=ks, y=pct, mode="lines", line=dict(color=ACCENT, dash="dot", width=1.5), opacity=0.6,
+                             yaxis="y2", hoverinfo="skip"))
+    fig.add_hline(y=0, line_color=RED, line_dash="dash")
+    if early is not None:
+        fig.add_vrect(x0=min(ks) - 0.5, x1=-0.5, fillcolor=MUTED, opacity=0.08, line_width=0,
+                      annotation_text="earlier = hindsight", annotation_position="top left")
+    title = (f"{curve.kind} shift, bars (negative = earlier, positive = later)" if early is not None
+             else f"{curve.kind} delay, bars (k = 0 is the report)")
+    fig.update_layout(**_LAYOUT, xaxis=dict(title=title, dtick=1 if len(ks) <= 21 else 2),
+                      yaxis_title=f"total $, {point_value_label}",
+                      yaxis2=dict(title="mean return per trade, % (dotted)", overlaying="y", side="right", showgrid=False))
+    fig.update_layout(margin=dict(l=40, r=60, t=20, b=40))
     return fig

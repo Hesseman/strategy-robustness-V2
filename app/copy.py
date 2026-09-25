@@ -48,6 +48,18 @@ CARDS = {
         "catches": "Picking the best of 240 variants guarantees an impressive in-sample number. The question is whether it is more impressive than the best of 240 variants with no edge at all.",
         "how": "Reality Check (White 2000): resample the in-sample days in blocks (stationary bootstrap, 20-day mean block), recompute every combination's mean daily P&L with the true means removed, and record the best; repeat 500 times. p = share of resamples whose best beats the observed best, and separately MultiWalk's pick. The effective number of independent variants comes from the correlation of the combinations' daily P&L. Reference only.",
     },
+    "timing_entry": {
+        "title": "Entry delay - does the edge live in the first bars after the signal?",
+        "tagline": "Execution sensitivity - the same trades, entered 1, 2, ... bars late, exits as reported",
+        "catches": "An edge that collapses within 1-2 bars of delay lives in the signal bar itself: it is exposed to latency and slippage on entry and, on slow bar sizes, is a warning sign for look-ahead in the signal. An edge that barely moves means the entry is a coarse regime filter, not a timing call.",
+        "how": "Every trade's entry moves k bars later and fills at the open of that bar; the exit keeps its reported bar and price (the exit rule is treated as a time-fixed signal - we cannot re-run the strategy's stops and targets). A trade whose delayed entry reaches its exit bar is skipped at that k and counted. In 'fixed hold' mode the exit moves k bars too, at the open, so the hold length is kept. Gross $, one contract, no costs: costs move the curve's level, not its shape. Trades are independent - no position limit. Left of zero (shaded) the entry moves k bars earlier instead, filled at that bar's open and skipped if it falls before the first bar: hindsight, since no strategy can enter before its signal - read it as how much of the move the entry signal lags, not as a result you could trade.",
+    },
+    "timing_exit": {
+        "title": "Exit delay - is the exit precisely timed?",
+        "tagline": "Exit sensitivity - the same trades, closed 1, 2, ... bars late, entries as reported",
+        "catches": "If a later exit improves the return, the exit rule fires early relative to the move. If it destroys the return, the exit is precisely timed (a stop or a target) and slippage on the exit bar matters more than on the entry bar.",
+        "how": "Every trade keeps its reported entry; its exit moves k bars later and fills at the open of that bar. A trade whose delayed exit falls past the last bar is skipped at that k and counted. A delayed exit may overlap the next trade's entry - trades are treated as independent. Gross $, one contract, no costs. Identical in both modes. Left of zero (shaded) the exit moves k bars earlier instead, filled at that bar's open and skipped once it would reach the entry bar: hindsight - how much the exit signal lags the turn, not a tradable result.",
+    },
 }
 
 CONCEPT = """**What the cards measure.** Every timing card scores *lift*: the strategy's return minus what random entries with the same hold lengths and directions would have earned on the same bars. A long strategy in a rising market is positive by construction; lift removes that drift.
