@@ -8,7 +8,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_no_mojibake_in_sources_or_readme():
-    files = sorted(ROOT.glob("app/*.py")) + sorted(ROOT.glob("robustness/*.py")) + [ROOT / "README.md"]
+    files = sorted(ROOT.glob("app/*.py")) + sorted(ROOT.glob("robustness/*.py"))
+    files += [p for p in [ROOT / "README.md"] if p.exists()]   # the Docker image ships no README
     bad = {str(p.relative_to(ROOT)): MOJIBAKE.findall(p.read_text(encoding="utf-8")) for p in files}
     assert not {k: v for k, v in bad.items() if v}
 
