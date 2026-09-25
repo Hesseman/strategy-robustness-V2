@@ -2,6 +2,9 @@
 
 Status: plan, 2026-09-23. Build target: the `claude/strategy-timing-sensitivity-docker-fdsl60` branch.
 
+V2, 2026-09-25: ported; the UI is a section of the main page (`app/timing_section.py`), not a
+second app - § 3's `app/timing_app.py`, compose service and § 5.2 describe the v1 build.
+
 ## 1. What we are building
 
 A second small Streamlit app in this repo (same Docker image, second compose service on port

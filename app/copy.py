@@ -68,6 +68,8 @@ CONCEPT = """**What the cards measure.** Every timing card scores *lift*: the st
 
 **How capital is set.** Cumulative $ P&L for one contract -> drawdown episodes (peak -> trough -> recovery) -> **CDaR-80** = the mean depth of the worst 20% of episodes -> **capital = 5 × CDaR-80** -> annual return = yearly $ / that capital. In the sidebar you can replace the capital with a fixed starting amount; CDaR-80 and 5 × CDaR-80 are still shown.
 
+**Timing sensitivity** (under the five cards) shifts every entry, or every exit, by 1, 2, ... bars and shows how much of the gross $ survives - and, as hindsight, what acting earlier would have given. It is a picture, not a gate, and is not counted in "Gates passed".
+
 **Optional: MultiWalk surface tests** (bottom of the page) read every parameter combination of a MultiWalk optimisation and ask whether in-sample results predicted out-of-sample results across the whole grid (WFC), whether the chosen parameters sit on a plateau, and how much of the best in-sample result is selection luck."""
 
 HELP = {
@@ -87,4 +89,7 @@ HELP = {
 Upload two files: the `..._MultiWalk.txt` from `Optimization Files` and `WalkforwardData.db` from `Walkforward Files`. Nothing else is needed - these tests use no bars and no report.""",
     "mw_files": "The text file holds every parameter combination's daily P&L and trades; the database holds the walk-forward windows and which combination MultiWalk picked for each. Both come from the same project folder and the same run.",
     "n_boot": "Resamples for the selection haircut. 500 gives a p-value floor of 0.002; 200 is enough for a first look.",
+    "timing": "Same two files as the cards above. How much of the gross $ survives when every entry, or every exit, is acted on 1, 2, ... bars late - and, left of zero, 1, 2, ... bars early (hindsight: no strategy can act before its signal). A picture of fragility, not a gate: no verdict and not counted in 'Gates passed'.",
+    "timing_max_k": "How many bars each leg is shifted, both ways: 1..k bars later (a delay you could suffer live) and 1..k bars earlier (hindsight). A shifted leg fills at the open of the bar it moves to.",
+    "timing_mode": "Fixed exit (default): a delayed entry keeps the reported exit bar and price, so the hold gets shorter and a trade whose delayed entry reaches its exit bar is skipped. Fixed hold: the exit moves the same number of bars, so the hold length is kept. The exit-delay card is the same in both modes.",
 }

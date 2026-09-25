@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app import timing_section  # noqa: E402
 from app.copy import CARDS, CONCEPT, HELP  # noqa: E402
 from robustness import charts  # noqa: E402
 from robustness.bars_loader import BarsFormatError, load_bars  # noqa: E402
@@ -168,19 +169,21 @@ def _rank(pct: float, n: int) -> str:
     return f"{n - int(round(pct / 100 * n))} of {n}"
 
 
-def _main_section(report_bytes, bars_bytes, n_perm, seed, margin, capital_usd) -> None:
+def _main_section(report_bytes, bars_bytes, n_perm, seed, margin, capital_usd) -> bool:
+    """Accepts the uploaded bytes and the sidebar settings; renders the five cards. Returns True
+    when the battery ran, False when an error was shown instead."""
     try:
         result = _battery(report_bytes, bars_bytes, int(n_perm), int(seed), margin, capital_usd)
     except ReportFormatError as e:
-        st.error(f"Report not readable: {e}"); return
+        st.error(f"Report not readable: {e}"); return False
     except BarsFormatError as e:
-        st.error(f"Bar file not readable: {e}"); return
+        st.error(f"Bar file not readable: {e}"); return False
     except ValidationFailed as e:
         st.error("The report and the bars do not join - fix the inputs before any test can run.")
-        st.table([{"check": c.name, "ok": "✓" if c.passed else "✗", "detail": c.detail} for c in e.checks]); return
+        st.table([{"check": c.name, "ok": "✓" if c.passed else "✗", "detail": c.detail} for c in e.checks]); return False
     except Exception as e:
         st.error("Could not process these files - check that the report is the CSV Strategy Performance Report and the bars "
-                 f"are a Data Window export of the same symbol and interval. Details: {type(e).__name__}: {e}"); return
+                 f"are a Data Window export of the same symbol and interval. Details: {type(e).__name__}: {e}"); return False
 
     m = result.meta
     st.subheader(f"{m['symbol']} · {m['interval']} · {m['n_trades']} trades ({m['n_long']} long / {m['n_short']} short) "
@@ -254,6 +257,7 @@ def _main_section(report_bytes, bars_bytes, n_perm, seed, margin, capital_usd) -
     card("drawdown", result.verdicts["drawdown"], dd_lines, charts.fig_equity(dd), charts.fig_episode_hist(dd))
 
     st.download_button("Download results (JSON)", data=to_json(result), file_name="robustness_results.json", mime="application/json")
+    return True
 
 
 st.title("Strategy Robustness V2")
@@ -305,8 +309,12 @@ main_ready = bool(report_bytes and bars_bytes)
 if not main_ready:
     st.info("Upload both files to start the main battery, or click **Try the demo** in the sidebar.")
 
+main_ok = False
 if main_ready:
-    _main_section(report_bytes, bars_bytes, n_perm, seed, float(margin_in) or None, capital_usd)
+    main_ok = _main_section(report_bytes, bars_bytes, n_perm, seed, float(margin_in) or None, capital_usd)
+if main_ok:
+    st.divider()
+    timing_section.render(report_bytes, bars_bytes)
 
 st.divider()
 st.header("MultiWalk surface tests (optional)")

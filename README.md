@@ -4,8 +4,9 @@ Upload a TradeStation **Strategy Performance Report** (saved as CSV) and the **b
 strategy ran on (Data Window export, same symbol and interval). The app joins the trade list
 to the bars and runs the trade-list subset of our robustness battery against the five cards
 below. No files? Click **Try the demo** in the sidebar to run the same battery against a
-synthetic strategy instead. Three more cards are optional and read a MultiWalk optimisation
-instead — see "MultiWalk surface tests (optional)" below.
+synthetic strategy instead. Below the five cards, a timing-sensitivity section shifts every
+entry or exit by a few bars (reference, no verdict). Three more cards are optional and read a
+MultiWalk optimisation instead — see "MultiWalk surface tests (optional)" below.
 
 | Card | Question | Verdict type |
 |---|---|---|
@@ -14,6 +15,8 @@ instead — see "MultiWalk surface tests (optional)" below.
 | T3 eras + crisis | every era? high-volatility bars? | score: k of 4 windows |
 | T7 cost stress | how much friction kills it? | gate: net lift after 1× cost > 0 |
 | Drawdown & capital | CDaR-80, capital = 5 × CDaR-80, annual % | reference |
+| Entry delay | does the edge live in the first bars after the signal? | reference (timing section) |
+| Exit delay | is the exit precisely timed? | reference (timing section) |
 | WFC — Walk Forward Correlation | did in-sample results predict out-of-sample results across the whole parameter grid? | gate: pooled p < 0.05 and ≥ half of the positive-IS combinations positive OOS (MultiWalk section, optional) |
 | Plateau | does the chosen parameter set sit on a plateau or a spike? | score 0–1 (MultiWalk section, optional) |
 | Selection haircut | how good does the best of N look when there is nothing to find? | reference (MultiWalk section, optional) |
@@ -27,7 +30,7 @@ with these tests", not "it works".
 The app explains itself as you go: the **How we judge a strategy - the concept in one
 minute** expander at the top covers lift vs drift, gates vs scores vs reference, and how
 CDaR-80 turns into capital and an annual return; every input in the sidebar carries a `?`
-tooltip; **How to export** popovers next to the report and bars uploaders repeat the
+tooltip, and so do the timing section's two controls; **How to export** popovers next to the report and bars uploaders repeat the
 TradeStation steps below without leaving the page; and a capital toggle in the sidebar
 switches the drawdown card between capital = 5 × CDaR-80 (the default) and a fixed starting
 amount you choose — CDaR-80 itself is shown either way.
@@ -40,6 +43,31 @@ amount you choose — CDaR-80 itself is shown either way.
    the whole traded range**. Extra indicator (PLOT) columns are ignored.
 
 Both exports must come from the same workspace so their timestamps agree.
+
+## Timing sensitivity (same two files)
+
+Below the five cards, the same two exports answer one more question: **how sensitive is the
+return to the timing of the trades?** Two cards, each a curve over a shift of up to 10 bars
+(the section's slider goes to 20): the gross $ when every entry is taken k bars late with the
+exits as reported, and when every exit is taken k bars late with the entries as reported.
+k = 0 is the report's own fills. It is a picture of fragility, not a gate: no verdict, no
+p-value, not counted in "Gates passed".
+
+Each chart also runs the other way, left of zero: the entry (or exit) taken 1..k bars
+**earlier**. No strategy can act before its signal fires, so that side is hindsight and not
+tradable. It shows how much of the move each signal lags, and a "Where timing matters" block
+compares the two legs per trade: if an earlier entry gains more than an earlier exit, the entry
+trigger is the one worth working on, and the other way round.
+
+A moved leg fills at the open of the bar it moves to; a trade whose delayed entry reaches its
+exit bar, or whose delayed exit falls past the last bar, is skipped at that k and counted
+(`n alive`). Returns are gross, one contract, no costs, trades independent; a *fixed hold*
+mode moves the exit along with a delayed entry so the hold length is kept. The section has its
+own JSON download (`timing_results.json`).
+
+Out of scope: treating the earlier (hindsight) side as a tradable result, re-running the
+strategy's own stop/target logic on the shifted position, cost haircuts, position limits or
+netting of overlapping trades, and any gate or p-value.
 
 ## MultiWalk surface tests (optional)
 
