@@ -56,14 +56,15 @@ p-value, not counted in "Gates passed".
 Each chart also runs the other way, left of zero: the entry (or exit) taken 1..k bars
 **earlier**. No strategy can act before its signal fires, so that side is hindsight and not
 tradable. It shows how much of the move each signal lags, and a "Where timing matters" block
-compares the two legs per trade: if an earlier entry gains more than an earlier exit, the entry
-trigger is the one worth working on, and the other way round.
+compares the two legs per trade, moving one leg at a time whichever mode is selected: if an
+earlier entry gains more than an earlier exit, the entry trigger is the one worth working on,
+and the other way round.
 
 A moved leg fills at the open of the bar it moves to; a trade whose delayed entry reaches its
 exit bar, or whose delayed exit falls past the last bar, is skipped at that k and counted
 (`n alive`). Returns are gross, one contract, no costs, trades independent; a *fixed hold*
-mode moves the exit along with a delayed entry so the hold length is kept. The section has its
-own JSON download (`timing_results.json`).
+mode moves the exit along with a delayed entry so the hold length is kept (the entry card then
+shifts the whole trade). The section has its own JSON download (`timing_results.json`).
 
 Out of scope: treating the earlier (hindsight) side as a tradable result, re-running the
 strategy's own stop/target logic on the shifted position, cost haircuts, position limits or

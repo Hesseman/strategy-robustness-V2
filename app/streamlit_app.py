@@ -14,12 +14,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import timing_section  # noqa: E402
 from app.copy import CARDS, CONCEPT, HELP  # noqa: E402
+from app.loaders import loaded_bars, parsed_report  # noqa: E402
 from robustness import charts  # noqa: E402
-from robustness.bars_loader import BarsFormatError, load_bars  # noqa: E402
+from robustness.bars_loader import BarsFormatError  # noqa: E402
 from robustness.battery import ValidationFailed, run_battery, to_json  # noqa: E402
 from robustness.multiwalk_battery import MultiWalkValidationFailed, mw_to_json, run_multiwalk_battery  # noqa: E402
 from robustness.multiwalk_text import MultiWalkFormatError, parse_multiwalk_text  # noqa: E402
-from robustness.report_parser import ReportFormatError, parse_report  # noqa: E402
+from robustness.report_parser import ReportFormatError  # noqa: E402
 from robustness.walkforward_db import WalkforwardDBError, parse_walkforward_db  # noqa: E402
 import glob  # noqa: E402
 
@@ -62,16 +63,6 @@ def _interval_label(value: str) -> str:
 
 
 @st.cache_data(show_spinner=False)
-def _parse(report_bytes: bytes):
-    return parse_report(report_bytes.decode("utf-8-sig", errors="replace"))
-
-
-@st.cache_data(show_spinner=False)
-def _bars(bars_bytes: bytes):
-    return load_bars(bars_bytes.decode("utf-8-sig", errors="replace"))
-
-
-@st.cache_data(show_spinner=False)
 def demo_files() -> tuple[bytes, bytes]:
     """Synthetic report + bars (planted edge, seeds 30/31) for the demo button."""
     from robustness.synthetic import bars_to_ts_text, make_bars, make_trades, trades_to_report_text
@@ -82,7 +73,7 @@ def demo_files() -> tuple[bytes, bytes]:
 
 @st.cache_data(show_spinner="Running the battery...")
 def _battery(report_bytes: bytes, bars_bytes: bytes, n_perm: int, seed: int, margin: float | None, capital_usd: float | None):
-    return run_battery(_parse(report_bytes), _bars(bars_bytes), n_perm=n_perm, seed=seed, today_margin_usd=margin, capital_usd=capital_usd)
+    return run_battery(parsed_report(report_bytes), loaded_bars(bars_bytes), n_perm=n_perm, seed=seed, today_margin_usd=margin, capital_usd=capital_usd)
 
 
 def _p_text(k_ge: int, p: float) -> str:
@@ -194,7 +185,7 @@ def _main_section(report_bytes, bars_bytes, n_perm, seed, margin, capital_usd) -
     for w in m["warnings"]:
         st.warning(w)
 
-    result_summary = _parse(report_bytes).summary
+    result_summary = parsed_report(report_bytes).summary
     st.caption("TradeStation's own summary (as traded, its cost assumptions). The cards below are per contract with our cost model.")
     strip = st.columns(6)
     for col, (label, key, kind) in zip(strip, [

@@ -134,14 +134,17 @@ def fig_delay_curve(curve: DelayCurve, point_value_label: str, early: DelayCurve
     """Gross $ over alive trades vs shift in bars (k = 0 = as reported, in ACCENT), with the mean %
     return per trade on a right-hand axis; hover shows how many trades are still alive. With
     `early` (the same leg moved earlier) the x axis runs -max_k..+max_k and the negative,
-    hindsight side is shaded and drawn with open markers."""
+    hindsight side is shaded and drawn with open markers. A shift with no alive trade is a gap
+    in both traces, not a $0 point."""
     pts = ([(-p.k, p, True) for p in reversed(early.points[1:])] if early is not None else []) + \
           [(p.k, p, False) for p in curve.points]
     ks = [k for k, _, _ in pts]
-    usd = [p.total_usd for _, p, _ in pts]
-    pct = [p.mean_pct * 100 for _, p, _ in pts]
+    # a shift with no alive trade has no return: leave a gap, never a $0 point on the zero line
+    usd = [p.total_usd if p.n_alive else None for _, p, _ in pts]
+    pct = [p.mean_pct * 100 if p.n_alive else None for _, p, _ in pts]
     hover = [(f"{-k} bar(s) earlier (hindsight)" if e else f"k = {k}") +
-             f": ${p.total_usd:,.0f} gross, mean {p.mean_pct*100:+.3f}% per trade, {p.n_alive} alive / {p.n_skipped} skipped"
+             (f": ${p.total_usd:,.0f} gross, mean {p.mean_pct*100:+.3f}% per trade, {p.n_alive} alive / {p.n_skipped} skipped"
+              if p.n_alive else f": no trade alive ({p.n_skipped} skipped)")
              for k, p, e in pts]
     colors = [ACCENT if k == 0 else MUTED for k in ks]
     symbols = ["circle-open" if e else "circle" for _, _, e in pts]

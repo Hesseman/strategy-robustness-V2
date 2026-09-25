@@ -50,6 +50,10 @@ def test_timing_section_renders_under_the_cards_and_above_multiwalk(tmp_path, mo
     timing = next(i for i, h in enumerate(heads) if "Timing sensitivity" in h)
     multiwalk = next(i for i, h in enumerate(heads) if "MultiWalk" in h)
     assert timing < multiwalk
+    blocks = [el.value for el in at.markdown]
+    drawdown = next(i for i, v in enumerate(blocks) if v.startswith("### Drawdown"))
+    entry = next(i for i, v in enumerate(blocks) if v.startswith("### Entry delay"))
+    assert drawdown < entry, "the timing cards must sit under the five cards"
     text = _markdown(at)
     assert "Gates passed" in text
     assert "Entry delay" in text and "Exit delay" in text
@@ -57,17 +61,49 @@ def test_timing_section_renders_under_the_cards_and_above_multiwalk(tmp_path, mo
     assert "Where timing matters" in text and "hindsight: entering 1 bar earlier" in text
     assert "hindsight: exiting 1 bar earlier" in text and "best shift in -10..+10" in text
     assert re.search(r"(?<!\\)\$\d", text) is None, "an unescaped dollar amount reached st.markdown"
+    specs = [c.proto.spec for c in at.get("plotly_chart")]
+    assert sum("entry shift" in s for s in specs) == 1 and sum("exit shift" in s for s in specs) == 1
 
 
 def test_timing_controls_rerender(tmp_path, monkeypatch):
     at = _run_sample(tmp_path, monkeypatch)
     at.radio(key="timing_mode").set_value("fixed_hold").run()
     assert not at.exception, [str(e) for e in at.exception]
-    assert "Entry delay" in _markdown(at)
+    text = _markdown(at)
+    assert "hindsight: shifting the whole trade 1 bar earlier" in text and "delaying the whole trade 1 bar" in text
+    assert "hindsight: exiting 1 bar earlier" in text, "the exit card does not depend on the mode"
+    assert "Where timing matters" in text, "the leg comparison always uses single-leg curves"
+    assert any("the exit moves with the entry" in c.value for c in at.caption)
     at.slider(key="timing_max_k").set_value(4).run()
     assert not at.exception, [str(e) for e in at.exception]
     text = _markdown(at)
     assert "n alive at k = 4" in text and "best shift in -4..+4" in text
+
+
+def test_timing_controls_keep_their_values_while_the_section_is_hidden(tmp_path, monkeypatch):
+    at = _run_sample(tmp_path, monkeypatch)
+    at.slider(key="timing_max_k").set_value(4).run()
+    at.radio(key="timing_mode").set_value("fixed_hold").run()
+    at.session_state["sample"] = False
+    at.run()
+    assert not any("Timing sensitivity" in h for h in _headers(at))
+    at.session_state["sample"] = True
+    at.run()
+    assert not at.exception, [str(e) for e in at.exception]
+    assert at.slider(key="timing_max_k").value == 4 and at.radio(key="timing_mode").value == "fixed_hold"
+    assert "n alive at k = 4" in _markdown(at)
+
+
+def test_a_failure_inside_the_section_is_a_warning_and_multiwalk_still_renders(tmp_path, monkeypatch):
+    from app import timing_section
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(timing_section, "where_lines", boom)
+    at = _run_sample(tmp_path, monkeypatch)
+    assert not at.exception, [str(e) for e in at.exception]
+    assert any("Timing section skipped: RuntimeError: boom" in el.value for el in at.warning)
+    assert any("MultiWalk" in h for h in _headers(at))
 
 
 def test_no_timing_section_when_the_files_do_not_join(tmp_path, monkeypatch):

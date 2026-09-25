@@ -3,7 +3,9 @@
 Status: plan, 2026-09-23. Build target: the `claude/strategy-timing-sensitivity-docker-fdsl60` branch.
 
 V2, 2026-09-25: ported; the UI is a section of the main page (`app/timing_section.py`), not a
-second app - § 3's `app/timing_app.py`, compose service and § 5.2 describe the v1 build.
+second app. This plan records the v1 build as designed - its standalone app, compose service,
+sidebar controls, test counts, image name and § 6's out-of-scope list (V2 ships the earlier,
+hindsight side) are v1 facts. V2's README is authoritative for V2.
 
 ## 1. What we are building
 

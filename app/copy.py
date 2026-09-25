@@ -2,7 +2,7 @@
 CARDS = {
     "baseline": {
         "title": "Baseline - edge is measured against the drift, not against zero",
-        "tagline": "Every card below scores lift = the strategy's return minus what random timing earns",
+        "tagline": "The T8a, T3 and T7 cards below score lift = the strategy's return minus what random timing earns",
         "catches": "A long strategy on a rising market shows positive returns by construction; a win rate proves nothing by itself.",
         "how": "For every trade, the average return a random entry with the same hold length and direction would have earned over the whole bar history. Lift is the strategy's mean minus that. Per-contract % of price, so early and late years weigh the same.",
     },
@@ -62,9 +62,9 @@ CARDS = {
     },
 }
 
-CONCEPT = """**What the cards measure.** Every timing card scores *lift*: the strategy's return minus what random entries with the same hold lengths and directions would have earned on the same bars. A long strategy in a rising market is positive by construction; lift removes that drift.
+CONCEPT = """**What the cards measure.** The baseline, T8a, T3 and T7 cards score *lift*: the strategy's return minus what random entries with the same hold lengths and directions would have earned on the same bars. A long strategy in a rising market is positive by construction; lift removes that drift.
 
-**How verdicts work.** Gates decide (PASS / FAIL): T8a random entries (p < 0.05) and T7 costs (net lift after 1x cost > 0). Scores rank (T3: windows with positive lift). Reference cards inform (baseline, drawdown). There is no composite number on purpose: one failed gate is a failed strategy, however good the rest looks.
+**How verdicts work.** Gates decide (PASS / FAIL): T8a random entries (p < 0.05) and T7 costs (net lift after 1x cost > 0). Scores rank (T3: windows with positive lift). Reference cards inform (baseline, drawdown, and the two timing-sensitivity cards). There is no composite number on purpose: one failed gate is a failed strategy, however good the rest looks.
 
 **How capital is set.** Cumulative $ P&L for one contract -> drawdown episodes (peak -> trough -> recovery) -> **CDaR-80** = the mean depth of the worst 20% of episodes -> **capital = 5 × CDaR-80** -> annual return = yearly $ / that capital. In the sidebar you can replace the capital with a fixed starting amount; CDaR-80 and 5 × CDaR-80 are still shown.
 
@@ -91,5 +91,5 @@ Upload two files: the `..._MultiWalk.txt` from `Optimization Files` and `Walkfor
     "n_boot": "Resamples for the selection haircut. 500 gives a p-value floor of 0.002; 200 is enough for a first look.",
     "timing": "Same two files as the cards above. How much of the gross $ survives when every entry, or every exit, is acted on 1, 2, ... bars late - and, left of zero, 1, 2, ... bars early (hindsight: no strategy can act before its signal). A picture of fragility, not a gate: no verdict and not counted in 'Gates passed'.",
     "timing_max_k": "How many bars each leg is shifted, both ways: 1..k bars later (a delay you could suffer live) and 1..k bars earlier (hindsight). A shifted leg fills at the open of the bar it moves to.",
-    "timing_mode": "Fixed exit (default): a delayed entry keeps the reported exit bar and price, so the hold gets shorter and a trade whose delayed entry reaches its exit bar is skipped. Fixed hold: the exit moves the same number of bars, so the hold length is kept. The exit-delay card is the same in both modes.",
+    "timing_mode": "Fixed exit (default): a delayed entry keeps the reported exit bar and price, so the hold gets shorter and a trade whose delayed entry reaches its exit bar is skipped. Fixed hold: the exit moves the same number of bars, so the hold length is kept and the entry card shifts the whole trade. The exit-delay card and the 'Where timing matters' lines (one leg at a time) are the same in both modes.",
 }
