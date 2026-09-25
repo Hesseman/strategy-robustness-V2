@@ -91,10 +91,17 @@ def fig_episode_hist(dd: DrawdownResult) -> go.Figure:
 
 
 def fig_wfc_scatter(w: WFCWindow, metric_label: str, pick_label: str = "MultiWalk's pick", top: list[int] | None = None) -> go.Figure:
-    """In-sample vs out-of-sample metric per parameter combination, the window's pick highlighted
-    (named pick_label), the top in-sample combinations (iteration indices) outlined red, zero lines."""
+    """In-sample vs out-of-sample metric per parameter combination (Tinsley's WFC chart) with his
+    green least-squares line, the window's pick highlighted (named pick_label), the top in-sample
+    combinations (iteration indices) outlined red, zero lines. No line when fewer than 2 points
+    or all in-sample values are equal."""
     m = np.isfinite(w.x) & np.isfinite(w.y)
     fig = go.Figure(go.Scatter(x=w.x[m], y=w.y[m], mode="markers", marker=dict(color=MUTED, size=7, opacity=0.75), name="combinations"))
+    if m.sum() >= 2 and np.ptp(w.x[m]) > 0:
+        slope, intercept = np.polyfit(w.x[m], w.y[m], 1)
+        xs = np.array([w.x[m].min(), w.x[m].max()])
+        fig.add_trace(go.Scatter(x=xs, y=intercept + slope * xs, mode="lines", line=dict(color=GREEN, width=2.5),
+                                 name="best fit", hoverinfo="skip"))
     if top:
         fig.add_trace(go.Scatter(x=w.x[top], y=w.y[top], mode="markers", name=f"top {len(top)} in-sample",
                                  marker=dict(size=13, color="rgba(0,0,0,0)", line=dict(color=RED, width=2))))

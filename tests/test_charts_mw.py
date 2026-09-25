@@ -44,3 +44,19 @@ def test_ranked_profile_and_bands_figures():
     assert len(charts.fig_wfc_bands(bands, "net profit $").data[0].x) == 4
     scatter = charts.fig_wfc_scatter(w, "net profit $", pick_label="best in-sample", top=top)
     assert any(t.name == "best in-sample" for t in scatter.data) and any((t.name or "").startswith("top ") for t in scatter.data)
+
+
+def test_scatter_draws_tinsleys_best_fit_line():
+    import numpy as np
+    from robustness.wfc_grid import WFCWindow
+    x = np.array([1.0, 2.0, np.nan, 4.0, 5.0, 6.0])
+    y = np.array([2.5, 3.9, 9.0, 8.2, 9.8, 12.1])
+    w = WFCWindow(1, "w", True, 5, 1, x, y, 0.0, 0.0, 0, 0.0, 1.0, np.empty(0), 0, float("nan"), float("nan"), "", False)
+    fit = next(t for t in charts.fig_wfc_scatter(w, "Sharpe").data if t.name == "best fit")
+    m = np.isfinite(x)
+    slope, intercept = np.polyfit(x[m], y[m], 1)
+    assert list(fit.x) == [1.0, 6.0] and np.allclose(fit.y, [intercept + slope * 1.0, intercept + slope * 6.0])
+    assert fit.line.color == charts.GREEN
+    flat = WFCWindow(1, "w", True, 3, 0, np.array([2.0, 2.0, 2.0]), np.array([1.0, 2.0, 3.0]), 0.0, 0.0, 0, 0.0, 1.0,
+                     np.empty(0), 0, float("nan"), float("nan"), "", False)
+    assert not any(t.name == "best fit" for t in charts.fig_wfc_scatter(flat, "Sharpe").data)   # no line through a vertical stack

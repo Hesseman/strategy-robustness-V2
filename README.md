@@ -97,7 +97,8 @@ What the three cards mean:
   MultiWalk picked; pooled p < 0.05 and at least half of the in-sample-positive combinations
   stayed positive out-of-sample. When the combinations are nearly identical (fewer than 3
   effective independent variants) a low correlation cannot tell over-fitting from "nothing to
-  rank", so the card reads **not informative** and the gate is not applied. Tabs: a scatter,
+  rank", so the card reads **not informative** and the gate is not applied. Tabs: a scatter
+  with a green best-fit line (Tinsley's chart),
   a ranked profile (combinations sorted by in-sample result, in-sample rank as a line and
   out-of-sample rank as dots on the same chart), bands (100+ combinations: mean out-of-sample
   result per tenth of the in-sample ranking) and the null; the top in-sample combinations are
