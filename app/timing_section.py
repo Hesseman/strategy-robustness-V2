@@ -15,7 +15,7 @@ import streamlit as st
 from app.copy import CARDS, HELP
 from app.loaders import loaded_bars, parsed_report
 from robustness import charts
-from robustness.timing import DelayCurve, TimingResult, run_timing, to_json
+from robustness.timing import DelayCurve, TimingResult, paired_change, run_timing, to_json
 
 MODE_LABELS = {"fixed_exit": "Fixed exit - a delayed entry keeps the reported exit",
                "fixed_hold": "Fixed hold - a delayed entry moves the exit too"}
@@ -50,42 +50,43 @@ def _timing(report_bytes: bytes, bars_bytes: bytes, max_k: int, mode: str) -> Ti
 
 def early_line(e: DelayCurve, c: DelayCurve) -> str:
     """Accepts the earlier (hindsight) curve and the delayed curve of the same leg and mode;
-    returns one bullet: what acting 1 bar earlier would have given, and the best shift across
-    both sides. Guarantees the wording names what moved (the entry, the exit, or the whole
-    trade in fixed_hold); relies on k = 0 keeping every trade alive, so the best-shift search
-    is never empty."""
+    returns one bullet: what acting 1 bar earlier does to each trade that still fits, compared
+    with the same trade as reported, and to the total. Guarantees the wording names what moved
+    (the entry, the exit, or the whole trade in fixed_hold) and that trades too short to shift
+    are counted, never averaged in."""
     verb = {"the entry": "entering", "the exit": "exiting", "the whole trade": "shifting the whole trade"}[_leg(e)]
     p0, p1 = c.points[0], e.points[1]
-    first = (f"hindsight: {verb} 1 bar earlier gives no alive trade" if p1.n_alive == 0 else
-             f"hindsight: {verb} 1 bar earlier gives **{_usd(p1.total_usd)}** "
-             f"({_dusd(p1.total_usd - p0.total_usd)} vs as reported; {p1.n_alive} trades alive)")
-    shifts = [(-p.k, p) for p in e.points[1:]] + [(p.k, p) for p in c.points]
-    k_best, best = max(((k, p) for k, p in shifts if p.n_alive > 0), key=lambda kp: kp[1].total_usd)
-    where = "as reported" if k_best == 0 else (f"{-k_best} bar(s) earlier" if k_best < 0 else f"{k_best} bar(s) later")
-    return first + f"; best shift in -{e.points[-1].k}..+{c.points[-1].k}: **{where}** ({_usd(best.total_usd)}, {best.n_alive} alive)"
+    mean, n = paired_change(e, 1)
+    if n == 0:
+        return f"hindsight: {verb} 1 bar earlier fits no trade"
+    short = p0.n_alive - n
+    return (f"hindsight: {verb} 1 bar earlier changes each of the {n} trades that fit by **{_dusd(mean)}** "
+            f"(total {_usd(p1.total_usd)}, {_dusd(p1.total_usd - p0.total_usd)} vs as reported"
+            + (f"; {short} trades too short to shift" if short else "") + ")")
 
 
 def where_lines(r: TimingResult) -> list[str]:
     """Accepts a TimingResult computed in 'fixed_exit' mode, where every curve moves one leg and
-    keeps the other as reported; returns the 'where timing matters' bullets: the change in
-    total and in mean $ per alive trade from moving each leg 1 bar earlier (hindsight) and 1
-    bar later, and which leg the earlier side favours. The verdict uses the mean per alive
-    trade, because an earlier exit drops trades shorter than the shift and a total over fewer
-    trades is not comparable. Guarantees an empty list when any 1-bar point has no alive
-    trade; raises ValueError for a 'fixed_hold' result, whose entry curves move both legs."""
+    keeps the other as reported; returns the 'where timing matters' bullets: for each leg moved
+    1 bar earlier (hindsight) and 1 bar later, the change in the total and the change per trade
+    on the trades that still fit, each compared with itself as reported; then which leg the
+    earlier side favours, judged on those paired per-trade changes. Guarantees an empty list
+    when any 1-bar shift fits no trade; raises ValueError for a 'fixed_hold' result, whose entry
+    curves move both legs."""
     if r.entry.mode != "fixed_exit":
         raise ValueError("where_lines compares single legs: pass the fixed_exit result")
     p0 = r.entry.points[0]
-    ee, xe, el, xl = r.entry_early.points[1], r.exit_early.points[1], r.entry.points[1], r.exit.points[1]
-    if min(p.n_alive for p in (ee, xe, el, xl)) == 0:
+    curves = {"ee": r.entry_early, "xe": r.exit_early, "el": r.entry, "xl": r.exit}
+    paired = {key: paired_change(c, 1) for key, c in curves.items()}
+    if min(n for _, n in paired.values()) == 0:
         return []
 
-    def fmt(p) -> str:
-        return (f"{_dusd(p.total_usd - p0.total_usd)} total, {_dusd(p.mean_usd - p0.mean_usd)} per trade "
-                f"({p.n_alive} alive)")
-    lines = [f"1 bar **earlier** (hindsight): entry {fmt(ee)}; exit {fmt(xe)}",
-             f"1 bar **later**: entry {fmt(el)}; exit {fmt(xl)}"]
-    d_e, d_x = ee.mean_usd - p0.mean_usd, xe.mean_usd - p0.mean_usd
+    def fmt(key: str) -> str:
+        mean, n = paired[key]
+        return f"{_dusd(curves[key].points[1].total_usd - p0.total_usd)} total, {_dusd(mean)} per trade on the {n} that fit"
+    lines = [f"1 bar **earlier** (hindsight): entry {fmt('ee')}; exit {fmt('xe')}",
+             f"1 bar **later**: entry {fmt('el')}; exit {fmt('xl')}"]
+    d_e, d_x = paired["ee"][0], paired["xe"][0]
     if max(d_e, d_x) <= 0:
         lines.append("neither leg gains from acting earlier: the signals are not late relative to the move")
     else:
@@ -97,22 +98,26 @@ def where_lines(r: TimingResult) -> list[str]:
 
 def result_lines(c: DelayCurve, n_trades: int) -> list[str]:
     """Accepts a DelayCurve and the trade count; returns the card's result bullets: what the
-    first delay keeps (or how it changes the total, signed, when there is no positive
-    baseline), where the profit turns non-positive, and how many trades are still alive at the
-    largest delay. Guarantees no ratio is shown without a positive as-reported total; relies on
-    k = 0 keeping every trade alive."""
+    first delay keeps of the total (or how it changes the total, signed, when there is no
+    positive baseline) and how it changes each trade that still fits, compared with itself as
+    reported; where the profit turns non-positive; and how many trades are still alive at the
+    largest delay. Guarantees no ratio is shown without a positive as-reported total and trades
+    that no longer fit are counted, never averaged in; relies on k = 0 keeping every trade alive."""
     leg = _leg(c)
     p0, p1, pk = c.points[0], c.points[1], c.points[-1]
     lines = [f"as reported (k = 0): **{_usd(p0.total_usd)}** gross over {p0.n_alive} trades, "
              f"mean {p0.mean_pct*100:+.3f}% per trade, win rate {p0.win_rate:.0%}"]
+    mean, n = paired_change(c, 1)
+    fit = (f"; the {n} trades that still fit change by **{_dusd(mean)}** each" if n else "") + \
+          (f", {p1.n_skipped} no longer fit" if p1.n_skipped else "")
     if p1.n_alive == 0:
-        lines.append(f"delaying {leg} 1 bar leaves no trade alive")
+        lines.append(f"delaying {leg} 1 bar leaves no trade that fits")
     elif math.isfinite(p1.retention):
         lines.append(f"delaying {leg} 1 bar keeps **{p1.retention:.0%}** of the gross $ "
-                     f"({_usd(p1.total_usd)} of {_usd(p0.total_usd)}; {p1.n_alive} trades alive)")
+                     f"({_usd(p1.total_usd)} of {_usd(p0.total_usd)}){fit}")
     else:
         lines.append(f"delaying {leg} 1 bar changes the gross $ by **{_dusd(p1.total_usd - p0.total_usd)}** "
-                     f"({_usd(p0.total_usd)} → {_usd(p1.total_usd)}; no ratio - the as-reported total is not positive)")
+                     f"({_usd(p0.total_usd)} → {_usd(p1.total_usd)}; no ratio - the as-reported total is not positive){fit}")
     alive_ks = [p.k for p in c.points if p.n_alive > 0]
     if p0.total_usd <= 0:
         lines.append("not profitable as reported, so there is no profit for a delay to lose")
@@ -164,7 +169,8 @@ def _section_body(report_bytes: bytes, bars_bytes: bytes, max_k: int, mode: str)
     wl = where_lines(single)
     if wl:
         st.markdown(_esc("**Where timing matters** - one leg moved, the other as reported (whichever mode is selected); "
-                         "change vs as reported, gross $, one contract ('alive' = trades that still fit at that shift)"))
+                         "gross $, one contract. 'Per trade' compares each trade that still fits with itself as reported, "
+                         "so trades too short to shift cannot move it; the total also loses them."))
         for line in wl:
             st.markdown(_esc(f"- {line}"))
     timing_card("timing_entry", result.entry, result.entry_early, m["n_trades"],

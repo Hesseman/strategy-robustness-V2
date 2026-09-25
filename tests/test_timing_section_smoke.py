@@ -59,7 +59,8 @@ def test_timing_section_renders_under_the_cards_and_above_multiwalk(tmp_path, mo
     assert "Entry delay" in text and "Exit delay" in text
     assert "n alive at k = 10" in text and "100% of entries were filled at the bar open" in text
     assert "Where timing matters" in text and "hindsight: entering 1 bar earlier" in text
-    assert "hindsight: exiting 1 bar earlier" in text and "best shift in -10..+10" in text
+    assert "hindsight: exiting 1 bar earlier" in text and "best shift" not in text
+    assert "per trade on the" in text and "that still fit change by" in text
     assert re.search(r"(?<!\\)\$\d", text) is None, "an unescaped dollar amount reached st.markdown"
     specs = [c.proto.spec for c in at.get("plotly_chart")]
     assert sum("entry shift" in s for s in specs) == 1 and sum("exit shift" in s for s in specs) == 1
@@ -77,7 +78,7 @@ def test_timing_controls_rerender(tmp_path, monkeypatch):
     at.slider(key="timing_max_k").set_value(4).run()
     assert not at.exception, [str(e) for e in at.exception]
     text = _markdown(at)
-    assert "n alive at k = 4" in text and "best shift in -4..+4" in text
+    assert "n alive at k = 4" in text and "per trade on the" in text
 
 
 def test_timing_controls_keep_their_values_while_the_section_is_hidden(tmp_path, monkeypatch):

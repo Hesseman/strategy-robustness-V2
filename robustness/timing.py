@@ -71,7 +71,8 @@ class DelayCurve:
     """kind: which leg moves ('entry' | 'exit'); mode: 'fixed_exit' | 'fixed_hold';
     points: one DelayPoint per k = 0..max_k; first_nonpositive_k: smallest k >= 1 with at
     least one alive trade and total_usd <= 0, else None; per_trade_pct: n_trades x
-    (max_k + 1) % returns, NaN where the trade is skipped; shift: 'later' (a delay, the
+    (max_k + 1) % returns, NaN where the trade is skipped; per_trade_usd: the same grid in
+    gross $ for one contract at the join's point value; shift: 'later' (a delay, the
     tradable direction) | 'earlier' (hindsight, reference only) - k counts bars in that
     direction."""
     kind: str
@@ -79,6 +80,7 @@ class DelayCurve:
     points: list[DelayPoint]
     first_nonpositive_k: int | None
     per_trade_pct: np.ndarray
+    per_trade_usd: np.ndarray
     shift: str = "later"
 
 
@@ -199,18 +201,36 @@ def delay_curve(trades: pd.DataFrame, open_: np.ndarray, point_value: float, leg
     if not _is_int(max_k) or max_k < 1:
         raise ValueError(f"max_k must be an int >= 1, got {max_k!r}")
     per_trade = np.full((len(trades), max_k + 1), np.nan)
+    per_usd = np.full((len(trades), max_k + 1), np.nan)
     points: list[DelayPoint] = []
     base_total = None
     for k in range(max_k + 1):
         pct, pts, alive = delayed_returns(trades, open_, k, leg, mode, early)
         per_trade[:, k] = pct
+        per_usd[:, k] = pts * point_value
         pt = _point(k, pct, pts * point_value, alive, base_total)
         if k == 0:
             base_total = pt.total_usd
         points.append(pt)
     first = next((p.k for p in points[1:] if p.n_alive > 0 and p.total_usd <= 0), None)
     return DelayCurve(kind=leg, mode=mode, points=points, first_nonpositive_k=first, per_trade_pct=per_trade,
-                      shift="earlier" if early else "later")
+                      per_trade_usd=per_usd, shift="earlier" if early else "later")
+
+
+def paired_change(curve: DelayCurve, k: int) -> tuple[float, int]:
+    """Mean $ change per trade from a shift of k bars, on the trades that still fit at k.
+
+    Accepts: a DelayCurve and k in 0..max_k. Returns: (mean over the alive trades of their $ at
+    k minus the same trade's $ as reported, number of such trades); (nan, 0) when none fits.
+    Guarantees: paired - a trade that cannot be shifted enters neither side, so dropping short
+    trades cannot move the number; raises ValueError for k outside the curve."""
+    u = curve.per_trade_usd
+    if not _is_int(k) or not 0 <= k < u.shape[1]:
+        raise ValueError(f"k must be an int in 0..{u.shape[1] - 1}, got {k!r}")
+    alive = np.isfinite(u[:, k])
+    if not alive.any():
+        return float("nan"), 0
+    return float(np.mean(u[alive, k] - u[alive, 0])), int(alive.sum())
 
 
 def run_timing(report: ParsedReport, bars: pd.DataFrame, *, max_k: int = 10, mode: str = "fixed_exit",

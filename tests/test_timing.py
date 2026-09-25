@@ -8,7 +8,7 @@ from robustness.bars_loader import load_bars
 from robustness.battery import ValidationFailed, _jsonable
 from robustness.report_parser import parse_report
 from robustness.returns import pct_returns, usd_per_contract
-from robustness.timing import TimingResult, delay_curve, delayed_returns, run_timing, to_json
+from robustness.timing import TimingResult, delay_curve, delayed_returns, paired_change, run_timing, to_json
 from conftest import make_bars, make_trades, bars_to_ts_text, trades_to_report_text
 
 PV = 2.0
@@ -251,3 +251,33 @@ def test_run_timing_has_earlier_curves():
     assert r.entry.shift == "later" and r.exit.shift == "later"
     # planted-edge exits sit at the best open in hindsight: moving them earlier must give some back too
     assert r.exit_early.points[1].mean_usd < r.exit.points[0].mean_usd
+
+
+def test_per_trade_usd_k0_is_the_report_and_nan_where_skipped():
+    bars = make_bars(n=4000, seed=11)
+    t = make_trades(bars, n=80, seed=12)
+    c = delay_curve(t, bars.open.to_numpy(), PV, "entry", max_k=6)
+    assert np.array_equal(c.per_trade_usd[:, 0], usd_per_contract(t, PV))
+    assert np.array_equal(np.isnan(c.per_trade_usd), np.isnan(c.per_trade_pct))
+
+
+def test_paired_change_compares_each_trade_with_itself():
+    bars = _ramp()
+    o = bars.open.to_numpy()
+    c = delay_curve(_trade(10, 20), o, PV, "entry", max_k=5)
+    assert paired_change(c, 3) == (pytest.approx(-3 * PV), 1)   # entry 110 -> 113, exit fixed at 120
+    assert paired_change(c, 0) == (0.0, 1)
+    both = pd.concat([_trade(10, 13), _trade(20, 30)], ignore_index=True)   # hold 3 and hold 10
+    c = delay_curve(both, o, PV, "entry", max_k=5)
+    mean3, n3 = paired_change(c, 3)
+    assert n3 == 1 and mean3 == pytest.approx(-3 * PV)   # the hold-3 trade no longer fits and enters neither side
+    assert c.points[3].total_usd == pytest.approx((130 - 123) * PV)   # the total still loses the skipped trade
+
+
+def test_paired_change_nan_when_nothing_fits_and_rejects_bad_k():
+    c = delay_curve(_trade(10, 12), _ramp().open.to_numpy(), PV, "entry", max_k=4)
+    mean, n = paired_change(c, 3)
+    assert n == 0 and np.isnan(mean)
+    for bad in (-1, 5, 1.0):
+        with pytest.raises(ValueError):
+            paired_change(c, bad)
