@@ -11,12 +11,77 @@ from robustness.windows import derive_windows
 AX = {"A": list(range(6)), "B": list(range(6))}
 
 
-def _run(structure, seed=5, metric="NP", n_days=1200):
+def _run(structure, seed=5, metric="NP", n_days=1200, null="signflip"):
     text, sched = make_multiwalk(AX, n_days=n_days, seed=seed, structure=structure, split=800)
     grid = parse_multiwalk_text(text)
     windows = derive_windows(parse_walkforward_db(make_walkforward_db(sched))[0], grid.dates)
     pairs = [(metric_values(window_metrics(grid, w.is_mask), metric), metric_values(window_metrics(grid, w.oos_mask), metric)) for w in windows]
-    return wfc_test(pairs, windows, grid, metric=metric, n_null=199, seed=0)
+    return wfc_test(pairs, windows, grid, metric=metric, n_null=199, seed=0, null=null)
+
+
+def _correlated_noise_grid(seed, shape=(6, 6), n_days=600, rho=0.9, trade_p=0.2):
+    """A grid with nothing planted whose cells share most of their noise, as real neighbouring
+    parameter sets share most of their trades: per trade P&L = sqrt(rho) x a field smoothed
+    over the grid + sqrt(1 - rho) x own noise, every cell trading on the same days."""
+    import itertools
+
+    import pandas as pd
+
+    from robustness.multiwalk_text import MultiWalkGrid
+    rng = np.random.default_rng(seed)
+    pos = np.array(list(itertools.product(*[range(s) for s in shape])), dtype=int)
+    n = len(pos)
+    trade_day = rng.random(n_days) < trade_p
+    white = rng.normal(size=(n, n_days))
+    d = np.abs(pos[:, None, :] - pos[None, :, :]).max(axis=2)
+    field = np.stack([white[d[i] <= 2].mean(axis=0) for i in range(n)])
+    field /= field.std(axis=1, keepdims=True)
+    noise = np.sqrt(rho) * field + np.sqrt(1 - rho) * rng.normal(size=(n, n_days))
+    daily = np.round(100.0 * trade_day[None, :] * noise, 2)
+    dates = pd.bdate_range("2020-01-06", periods=n_days)
+    ed = dates.values[trade_day].astype("datetime64[D]")
+    return MultiWalkGrid(param_names=[f"p{k}" for k in range(len(shape))], params=pos.astype(float),
+                         axes=[np.arange(s, dtype=float) for s in shape], grid_pos=pos, dates=dates, daily_pnl=daily,
+                         closed_pnl=daily.copy(), exit_dates=[ed] * n, exit_pnl=[daily[i, trade_day] for i in range(n)])
+
+
+def test_default_null_is_signflip_with_n_null_draws_and_deterministic():
+    r1, r2 = _run("persistent", seed=7), _run("persistent", seed=7)
+    w = r1.windows[0]
+    assert r1.null == "signflip" and w.null.size == 199
+    assert w.p_value == r2.windows[0].p_value and r1.pooled_p == r2.pooled_p
+    assert 1 / 200 <= w.p_value <= 1.0 and r1.passed
+
+
+def test_signflip_size_is_controlled_when_neighbours_share_their_noise():
+    """Oracle for the null itself: grids with nothing planted and strongly correlated neighbour
+    noise must pass about 5% of the time. (The torus shift passed 10-30% of such grids.)"""
+    from robustness.windows import custom_windows
+    passes = 0
+    for seed in range(24):
+        grid = _correlated_noise_grid(seed)
+        w = custom_windows(grid.dates, "single")[0]
+        x = metric_values(window_metrics(grid, w.is_mask), "NP"); y = metric_values(window_metrics(grid, w.oos_mask), "NP")
+        w.grid_row = int(np.argmax(x)) + 1
+        r = wfc_test([(x, y)], [w], grid, metric="NP", n_null=99, seed=seed)
+        passes += r.windows[0].p_value < 0.05
+    assert passes <= 4
+
+
+def test_signflip_window_null_keeps_the_observed_holes_and_the_seeding():
+    from robustness.null_signflip import SignFlipNull
+    text, sched = make_multiwalk(AX, n_days=1200, seed=5, structure="persistent", split=800)
+    grid = parse_multiwalk_text(text)
+    windows = derive_windows(parse_walkforward_db(make_walkforward_db(sched))[0], grid.dates)
+    x = metric_values(window_metrics(grid, windows[0].is_mask), "NP")
+    y = metric_values(window_metrics(grid, windows[0].oos_mask), "NP").copy()
+    y[:12] = np.nan
+    gen = SignFlipNull(grid, "NP")
+    w = wfc_window(x, y, windows[0], gen, n_null=50, seed=0)
+    assert w.n_points == 24 and w.n_dropped == 12 and w.null.size == 50
+    draws = SignFlipNull(grid, "NP").draws(y, windows[0], np.random.default_rng(0 + 1000 * windows[0].index), 50)
+    assert np.isnan(draws[:, :12]).all() and np.isfinite(draws[:, 12:]).all()
+    assert np.allclose(w.null, [spearman(x, d) for d in draws])
 
 
 def test_spearman_and_pearson_basics():
@@ -45,10 +110,10 @@ def test_decayed_surface_fails_on_oos_sign():
     assert r.windows[0].pos_oos_frac < 0.5
 
 
-def test_null_is_torus_shift_on_full_grid_and_deterministic():
-    r1, r2 = _run("persistent", seed=7), _run("persistent", seed=7)
+def test_torus_null_is_kept_behind_the_flag_and_deterministic():
+    r1, r2 = _run("persistent", seed=7, null="torus"), _run("persistent", seed=7, null="torus")
     w = r1.windows[0]
-    assert w.null.size == 35                       # every non-zero shift of a 6x6 grid
+    assert r1.null == "torus" and w.null.size == 35                       # every non-zero shift of a 6x6 grid
     assert r1.windows[0].p_value == r2.windows[0].p_value and r1.pooled_p == r2.pooled_p
     assert 1 / 36 <= w.p_value <= 1.0
 

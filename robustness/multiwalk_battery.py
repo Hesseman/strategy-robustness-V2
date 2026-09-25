@@ -15,7 +15,7 @@ from robustness.plateau_grid import PlateauResult, plateau_test
 from robustness.selection import SelectionResult, selection_test
 from robustness.surface import metric_values, window_metrics
 from robustness.walkforward_db import WFGroup
-from robustness.wfc_grid import WFCResult, WFCWindow, wfc_test
+from robustness.wfc_grid import NULLS, WFCResult, WFCWindow, wfc_test
 from robustness.windows import SCHEMES, Window, custom_windows, derive_windows
 
 CAVEAT_MW = ("These three tests read every parameter combination this MultiWalk optimisation tried, so unlike "
@@ -56,7 +56,7 @@ def validate(grid: MultiWalkGrid, group: WFGroup) -> list[Check]:
     checks.append(Check("iteration_count", grid.n_iter == group.n_iterations,
                         f"{grid.n_iter} iterations in the text file, {group.n_iterations} in the database", severity="error"))
     checks.append(Check("full_grid", grid.is_full_grid, f"grid {grid.shape} = {int(np.prod(grid.shape))} cells for {grid.n_iter} iterations"
-                        + ("" if grid.is_full_grid else " - not a full product grid, the WFC null uses permutations"), severity="warn"))
+                        + ("" if grid.is_full_grid else " - not a full product grid (the plateau neighbourhoods are sparser; the torus null, if chosen, permutes)"), severity="warn"))
     bad = []
     for w in group.windows:
         if not (1 <= w.grid_row <= grid.n_iter) or len(w.params) != grid.params.shape[1] or not np.allclose(grid.params[w.grid_row - 1], w.params, atol=1e-9):
@@ -87,22 +87,26 @@ def wfc_quadrant(w: WFCWindow, n_eff: float) -> str:
 
 def run_multiwalk_battery(grid: MultiWalkGrid, groups: list[WFGroup], *, group_no: int | None = None, n_null: int = 999,
                           n_boot: int = 500, seed: int = 0, min_trades: int = 10, alpha: float = 0.05,
-                          window_scheme: str = "multiwalk") -> MultiWalkResult:
+                          window_scheme: str = "multiwalk", null: str = "signflip", block: int = 21) -> MultiWalkResult:
     """Run the three surface tests for one walk-forward group.
 
     Accepts: the parsed grid and groups; group_no selects a group (default the first; an unknown number raises MultiWalkValidationFailed); n_null WFC
     null draws; n_boot Reality-Check draws; seed; min_trades - iterations with fewer closed
     trades in a window's IS or OOS are dropped from that window; alpha - WFC gate level;
     window_scheme - 'multiwalk' (the DB schedule and MultiWalk's picks), 'two' or 'single'
-    (windows.custom_windows; each window's pick is then the best in-sample variant by the metric).
-    Returns: MultiWalkResult with meta (incl. window_scheme, pick_label and per window the median
-    closed trades per variant in and out of sample), checks, windows, the WFC result on the
-    project's fitness (and on Net Profit when the fitness is NP/AvgDD), plateau, selection,
+    (windows.custom_windows; each window's pick is then the best in-sample variant by the metric);
+    null - the WFC null, 'signflip' (block sign-flip of the OOS daily cross-sectional deviations,
+    block trading days per block) or 'torus' (the pre-2026-09-25 grid shift, comparison only).
+    Returns: MultiWalkResult with meta (incl. window_scheme, pick_label, null, block and per window
+    the median closed trades per variant in and out of sample), checks, windows, the WFC result on
+    the project's fitness (and on Net Profit when the fitness is NP/AvgDD), plateau, selection,
     verdicts {'wfc': pass|fail|insufficient|not_informative, 'plateau': 'score', 'selection':
     'reference'} - a fail whose median N_eff over the complete, sufficient windows is below
     NEFF_MIN reads not_informative (meta n_eff_median) - gates 0/1 of 1.
-    Guarantees: raises ValueError for an unknown window_scheme and MultiWalkValidationFailed when
-    an error-severity check fails; nothing downstream runs then; deterministic for a given seed."""
+    Guarantees: raises ValueError for an unknown window_scheme or null and MultiWalkValidationFailed
+    when an error-severity check fails; nothing downstream runs then; deterministic for a given seed."""
+    if null not in NULLS:
+        raise ValueError(f"null must be one of {NULLS}, got {null!r}")
     if window_scheme not in SCHEMES:
         raise ValueError(f"window_scheme must be one of {SCHEMES}, got {window_scheme!r}")
     if group_no is None:
@@ -133,8 +137,9 @@ def run_multiwalk_battery(grid: MultiWalkGrid, groups: list[WFGroup], *, group_n
         pairs_np.append((xn, yn))
     checks.append(Check("min_trades", all(d == 0 for d in dropped),
                         f"iterations dropped for fewer than {min_trades} trades in IS or OOS, per window: {dropped}", severity="warn"))
-    wfc = wfc_test(pairs, windows, grid, metric=metric, alpha=alpha, n_null=n_null, seed=seed)
-    wfc_np = wfc_test(pairs_np, windows, grid, metric="NP", alpha=alpha, n_null=n_null, seed=seed) if metric != "NP" else None
+    wfc = wfc_test(pairs, windows, grid, metric=metric, alpha=alpha, n_null=n_null, seed=seed, null=null, block=block)
+    wfc_np = (wfc_test(pairs_np, windows, grid, metric="NP", alpha=alpha, n_null=n_null, seed=seed, null=null, block=block)
+              if metric != "NP" else None)
     plateau = plateau_test(pairs, windows, grid)
     selection = selection_test(grid, windows, n_boot=n_boot, seed=seed)
     usable = [i for i, r in enumerate(wfc.windows) if r.complete and not r.insufficient]
@@ -153,7 +158,7 @@ def run_multiwalk_battery(grid: MultiWalkGrid, groups: list[WFGroup], *, group_n
             "windows": [{"index": w.index, "label": w.label, "is_start": w.is_start, "is_end": w.is_end, "oos_start": w.oos_start,
                          "oos_end": w.oos_end, "complete": w.complete, "grid_row": w.grid_row, "params": list(w.params),
                          "is_trades_median": tr[0], "oos_trades_median": tr[1]} for w, tr in zip(windows, trades)],
-            "n_null": n_null, "n_boot": n_boot, "seed": seed, "min_trades": min_trades, "alpha": alpha,
+            "n_null": n_null, "n_boot": n_boot, "seed": seed, "min_trades": min_trades, "alpha": alpha, "null": null, "block": block,
             "in_period": f"{group.in_len} {group.in_type}", "out_period": f"{group.out_len} {group.out_type}", "anchored": group.anchored}
     return MultiWalkResult(meta=meta, checks=checks, windows=windows, wfc=wfc, wfc_np=wfc_np, plateau=plateau, selection=selection,
                            verdicts=verdicts, gates_passed=int(wfc.passed), gates_total=1, caveat=CAVEAT_MW)

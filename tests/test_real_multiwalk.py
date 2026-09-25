@@ -83,3 +83,20 @@ def test_real_battery_runs_and_prints(grid, groups):
           "p=", [x.p_value for x in w], "quadrant=", [x.quadrant for x in w],
           "| plateau=", [round(p.score_oos, 2) for p in r.plateau.windows], "| p_pick=", [s.p_pick for s in r.selection.windows],
           "n_eff=", [round(s.n_eff, 1) for s in r.selection.windows], "n_eff_median=", round(r.meta["n_eff_median"], 2))
+
+
+def test_signflip_null_takes_le2601_off_the_torus_pass(grid, groups):
+    """Oracle from docs/research/2026-09-25-wfc-region-concordance.md: on the 'two' scheme the
+    torus null passed LE2601's NP/AvgDD surface (p = 0.022) and the sign-flip null does not
+    (p = 0.165); on the MultiWalk schedule net profit moves from p = 0.028 to 0.066. The bands
+    below leave room for Monte-Carlo noise at 999 draws."""
+    from robustness.multiwalk_battery import run_multiwalk_battery
+    torus = run_multiwalk_battery(grid, groups, n_null=999, n_boot=50, seed=0, window_scheme="two", null="torus")
+    flip = run_multiwalk_battery(grid, groups, n_null=999, n_boot=50, seed=0, window_scheme="two")
+    assert torus.wfc.pooled_spearman == pytest.approx(flip.wfc.pooled_spearman)     # the statistic is untouched, only its null
+    assert torus.wfc.pooled_p < 0.05 and flip.wfc.pooled_p > 0.10
+    assert flip.meta["null"] == "signflip" and flip.wfc.null == "signflip" and torus.wfc.null == "torus"
+    mw = run_multiwalk_battery(grid, groups, n_null=999, n_boot=50, seed=0)
+    assert 0.04 <= mw.wfc_np.pooled_p <= 0.12
+    print("LE2601 two-scheme NP/AvgDD pooled p: torus", torus.wfc.pooled_p, "sign-flip", flip.wfc.pooled_p,
+          "| MultiWalk schedule NP pooled p sign-flip", mw.wfc_np.pooled_p)

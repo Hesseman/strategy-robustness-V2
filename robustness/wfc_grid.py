@@ -1,8 +1,12 @@
 """Walk Forward Correlation on the optimisation grid (Tinsley 2026, SSRN 6324079; spec decision 5).
 X = in-sample metric, Y = out-of-sample metric per parameter combination; WFC = rho(X, Y). The gate
-follows signal_lab/robustness/wfc.py: Spearman, a null that keeps the surface's smoothness (torus
-shifts of the OOS surface on the grid) and the paper's Diagnostic Matrix rule that correlation
-alone is not edge (positive OOS among the positive-IS points)."""
+follows signal_lab/robustness/wfc.py: Spearman, a null, and the paper's Diagnostic Matrix rule that
+correlation alone is not edge (positive OOS among the positive-IS points). The null (amended
+2026-09-25, docs/research/2026-09-25-wfc-region-concordance.md) is the block sign-flip of the OOS
+daily cross-sectional deviations (null_signflip.SignFlipNull): it keeps every cell's noise
+covariance, edges and ties. The torus shift of the OOS surface on the grid is kept behind
+null='torus' for comparison only - it passes 10-30% of no-structure grids once neighbours share
+their noise, which real grids always do."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -11,7 +15,10 @@ import numpy as np
 import pandas as pd
 
 from robustness.multiwalk_text import MultiWalkGrid
+from robustness.null_signflip import SignFlipNull
 from robustness.windows import Window
+
+NULLS = ("signflip", "torus")
 
 
 def _finite(x: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -69,10 +76,12 @@ class WFCResult:
     passed: bool
     reasons: list[str] = field(default_factory=list)
     n_null: int = 0
+    null: str = "signflip"
 
 
 class _Shifter:
-    """Torus shifts of a surface on a full product grid: shifted[i] = y[cell at grid_pos[i] + s mod shape]."""
+    """Torus shifts of a surface on a full product grid: shifted[i] = y[cell at grid_pos[i] + s mod shape].
+    Kept as the null='torus' generator; permutations when the grid is not a full product grid."""
 
     def __init__(self, grid: MultiWalkGrid):
         self.full = grid.is_full_grid
@@ -100,6 +109,16 @@ class _Shifter:
         idx = self.table[tuple(((self.pos + np.asarray(shift)) % self.shape).T)]
         return y[idx]
 
+    def draw_one(self, y: np.ndarray, window: Window, rng: np.random.Generator) -> np.ndarray:
+        """One shifted (or, off a full grid, permuted) copy of y; the window is not needed."""
+        return self.apply(y, self.random_shift(rng), rng)
+
+    def draws(self, y: np.ndarray, window: Window, rng: np.random.Generator, n_max: int) -> np.ndarray:
+        """Every non-zero shift when there are at most n_max of them, else n_max random ones,
+        stacked as (k, n_iter); permutations off a full grid."""
+        shifts = self.all_shifts(rng, n_max) if self.full else [None] * n_max
+        return np.stack([self.apply(y, s, rng) for s in shifts]) if shifts else np.empty((0, len(y)))
+
 
 def _quadrant(corr_ok: bool, oos_ok: bool) -> str:
     if corr_ok and oos_ok:
@@ -116,11 +135,12 @@ def _pct_rank(v: np.ndarray, value: float) -> float:
     return float((v[m] < value).mean() * 100.0) if m.any() and np.isfinite(value) else float("nan")
 
 
-def wfc_window(x: np.ndarray, y: np.ndarray, window: Window, shifter: _Shifter, *, n_null: int = 999, seed: int = 0,
+def wfc_window(x: np.ndarray, y: np.ndarray, window: Window, null_gen, *, n_null: int = 999, seed: int = 0,
                min_points: int = 8, min_pos_is: int = 4, alpha: float = 0.05, tau_pos: float = 0.5) -> WFCWindow:
     """WFC for one window. Accepts the per-iteration IS metric x and OOS metric y (NaN = dropped),
-    the Window (for the pick and completeness) and a _Shifter over the grid. Returns a WFCWindow
-    with the null (torus shifts on a full grid, permutations otherwise) and p = (k+1)/(n+1).
+    the Window (for the pick and completeness) and a null generator (SignFlipNull or _Shifter:
+    anything with draws(y, window, rng, n_max) -> (k, n_iter)). Returns a WFCWindow with the null
+    draws' Spearman values and p = (k+1)/(n+1); the rng is seeded seed + 1000 * window.index.
     Guarantees: insufficient when fewer than min_points valid pairs or fewer than min_pos_is
     positive-IS points; then p = 1 and the null is empty."""
     x = np.asarray(x, dtype=float); y = np.asarray(y, dtype=float)
@@ -134,9 +154,8 @@ def wfc_window(x: np.ndarray, y: np.ndarray, window: Window, shifter: _Shifter, 
     rng = np.random.default_rng(seed + 1000 * window.index)
     null = np.empty(0)
     if not insufficient:
-        yn = np.where(np.isfinite(y), y, np.nan)   # Y's surface with its own holes; correlate over the cells finite on both sides AFTER the shift (identical construction to the pooled null)
-        shifts = shifter.all_shifts(rng, n_null) if shifter.full else [None] * n_null
-        null = np.array([spearman(x, shifter.apply(yn, s, rng)) for s in shifts])
+        yn = np.where(np.isfinite(y), y, np.nan)   # Y's surface with its own holes; correlate over the cells finite on both sides of each draw (identical construction to the pooled null)
+        null = np.array([spearman(x, d) for d in null_gen.draws(yn, window, rng, n_null)])
     p = float((1 + int((null >= rho).sum())) / (1 + null.size)) if null.size else 1.0
     pick = window.grid_row - 1
     return WFCWindow(index=window.index, label=window.label, complete=window.complete, n_points=n, n_dropped=int(len(x) - n),
@@ -210,31 +229,37 @@ def wfc_bands(w: WFCWindow, n_bands: int = 10) -> list[Band]:
 
 
 def wfc_test(pairs: list[tuple[np.ndarray, np.ndarray]], windows: list[Window], grid: MultiWalkGrid, *, metric: str,
-             alpha: float = 0.05, tau_pos: float = 0.5, n_null: int = 999, seed: int = 0) -> WFCResult:
+             alpha: float = 0.05, tau_pos: float = 0.5, n_null: int = 999, seed: int = 0, null: str = "signflip",
+             block: int = 21) -> WFCResult:
     """WFC over all windows plus the pooled gate.
 
-    Accepts: pairs[i] = (IS metric, OOS metric) arrays for windows[i]; the grid (for shifts).
+    Accepts: pairs[i] = (IS metric, OOS metric) arrays for windows[i]; the grid (daily P&L for the
+    sign-flip null, geometry for the torus null); null in NULLS ('signflip' default, 'torus' for
+    comparison; anything else raises ValueError); block = sign-flip block length in trading days.
     Returns: WFCResult with one WFCWindow per window; pooled statistic = mean Spearman over the
-    complete, sufficient windows; pooled null = n_null draws of one independent shift per such
-    window; passed iff pooled p < alpha and pooled positive-OOS share >= tau_pos.
+    complete, sufficient windows; pooled null = n_null draws of one independent null surface per
+    such window; passed iff pooled p < alpha and pooled positive-OOS share >= tau_pos.
     Guarantees: with no usable window, passed is False, reasons == ['wfc_insufficient'] and the
     pooled values are NaN; deterministic for a given seed."""
-    shifter = _Shifter(grid)
-    results = [wfc_window(x, y, w, shifter, n_null=n_null, seed=seed, alpha=alpha, tau_pos=tau_pos)
+    if null not in NULLS:
+        raise ValueError(f"null must be one of {NULLS}, got {null!r}")
+    null_gen = SignFlipNull(grid, metric, block) if null == "signflip" else _Shifter(grid)
+    results = [wfc_window(x, y, w, null_gen, n_null=n_null, seed=seed, alpha=alpha, tau_pos=tau_pos)
                for (x, y), w in zip(pairs, windows)]
-    usable = [(r, p) for r, p in zip(results, pairs) if r.complete and not r.insufficient]
+    usable = [(r, p, w) for r, p, w in zip(results, pairs, windows) if r.complete and not r.insufficient]
     if not usable:
         return WFCResult(metric=metric, windows=results, n_complete=sum(r.complete for r in results), pooled_spearman=float("nan"),
-                         pooled_p=float("nan"), pooled_pos_oos_frac=float("nan"), passed=False, reasons=["wfc_insufficient"], n_null=n_null)
-    pooled_rho = float(np.mean([r.spearman for r, _ in usable]))
-    pooled_pos = float(np.mean([r.pos_oos_frac for r, _ in usable]))
+                         pooled_p=float("nan"), pooled_pos_oos_frac=float("nan"), passed=False, reasons=["wfc_insufficient"],
+                         n_null=n_null, null=null)
+    pooled_rho = float(np.mean([r.spearman for r, _, _ in usable]))
+    pooled_pos = float(np.mean([r.pos_oos_frac for r, _, _ in usable]))
     rng = np.random.default_rng(seed + 99)
     draws = np.empty(n_null)
     for b in range(n_null):
         vals = []
-        for r, (x, y) in usable:
+        for r, (x, y), w in usable:
             yn = np.where(np.isfinite(y), y, np.nan)
-            vals.append(spearman(x, shifter.apply(yn, shifter.random_shift(rng), rng)))
+            vals.append(spearman(x, null_gen.draw_one(yn, w, rng)))
         draws[b] = np.mean(vals)
     pooled_p = float((1 + int((draws >= pooled_rho).sum())) / (1 + n_null))
     reasons = []
@@ -243,4 +268,4 @@ def wfc_test(pairs: list[tuple[np.ndarray, np.ndarray]], windows: list[Window], 
     if pooled_pos < tau_pos:
         reasons.append("wfc_no_oos_edge")
     return WFCResult(metric=metric, windows=results, n_complete=sum(r.complete for r in results), pooled_spearman=pooled_rho,
-                     pooled_p=pooled_p, pooled_pos_oos_frac=pooled_pos, passed=not reasons, reasons=reasons, n_null=n_null)
+                     pooled_p=pooled_p, pooled_pos_oos_frac=pooled_pos, passed=not reasons, reasons=reasons, n_null=n_null, null=null)

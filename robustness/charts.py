@@ -168,10 +168,10 @@ def fig_wfc_bands(bands: list[Band], metric_label: str) -> go.Figure:
 
 
 def fig_wfc_null(w: WFCWindow) -> go.Figure:
-    """Histogram of the shifted-surface null of Spearman rho with the observed value marked."""
+    """Histogram of the null distribution of Spearman rho (re-drawn OOS surfaces) with the observed value marked."""
     fig = go.Figure(go.Histogram(x=w.null, nbinsx=30, marker_color=MUTED))
     fig.add_vline(x=w.spearman, line_color=ACCENT, line_width=3, annotation_text=f"observed ρ = {w.spearman:.2f}", annotation_position="top")
-    fig.update_layout(**_LAYOUT, xaxis_title="Spearman ρ of shifted OOS surfaces", yaxis_title=f"count of {w.null.size} shifts")
+    fig.update_layout(**_LAYOUT, xaxis_title="Spearman ρ under the null (OOS surface re-drawn)", yaxis_title=f"count of {w.null.size} draws")
     return fig
 
 
