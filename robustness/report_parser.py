@@ -172,7 +172,12 @@ def _parse_settings(lines: list[str]) -> dict:
         if not label:
             continue
         if mode == "strategies":
-            out["strategies"].append(label)
+            # only 'Name(On)' / 'Name(Off)' are strategies; some reports list costs and inputs
+            # straight after them without a 'TradeStation Strategy Settings' header
+            if label.endswith(("(On)", "(Off)")):
+                out["strategies"].append(label)
+            elif len(cells) > 1 and cells[1].strip():
+                out["inputs"][label] = cells[1].strip()
         elif mode == "inputs" and len(cells) > 1:
             out["inputs"][label] = cells[1].strip()
     return out

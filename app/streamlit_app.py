@@ -179,7 +179,8 @@ def _main_section(report_bytes, bars_bytes, n_perm, seed, margin, capital_usd) -
     m = result.meta
     st.subheader(f"{m['symbol']} · {m['interval']} · {m['n_trades']} trades ({m['n_long']} long / {m['n_short']} short) "
                  f"· {m['first_entry']:%Y-%m-%d} → {m['last_exit']:%Y-%m-%d}")
-    st.caption((f"strategies: {', '.join(m['strategies']) or '-'} · point value ${m['point_value']:g} (inferred) · "
+    on = [s[:-len("(On)")] for s in m["strategies"] if s.endswith("(On)")]
+    st.caption((f"strategies on: {', '.join(on) or '-'} · point value ${m['point_value']:g} (inferred) · "
                f"{m['n_bars']:,} bars at {_interval_label(m['bar_interval'])} · {m['n_perm']} random sets, seed {m['seed']}"
                ).replace("$", chr(92) + "$"))
     for w in m["warnings"]:

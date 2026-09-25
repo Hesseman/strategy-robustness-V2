@@ -49,6 +49,18 @@ def test_mini_report_settings_and_summary(mini_report_text):
     assert rep.warnings == []
 
 
+def test_settings_without_a_strategy_settings_header_keep_inputs_out_of_the_strategies(mini_report_text):
+    """Some TradeStation versions list costs and inputs straight after the strategies, with no
+    'TradeStation Strategy Settings' header; only '(On)' / '(Off)' lines are strategies."""
+    lines = mini_report_text.splitlines()
+    i = lines.index("TradeStation Strategy Settings,,,")
+    assert lines[i - 1] == ",,,"
+    lines[i - 1:i + 1] = ["Demo_Filter(Off),,,", "Costs/Capitalization,,,", "Initial Capital,$100000.00,,"]
+    rep = parse_report("\n".join(lines))
+    assert rep.settings["strategies"] == ["Demo_Strategy(On)", "Demo_Filter(Off)"]
+    assert rep.settings["inputs"] == {"Initial Capital": "$100000.00", "Demo_Strategy - Length": "20", "Demo_Strategy - UseStop": "true"}
+
+
 def test_synthetic_roundtrip():
     bars = make_bars(n=800, seed=5)
     trades = make_trades(bars, n=30, seed=6)
