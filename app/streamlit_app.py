@@ -18,7 +18,7 @@ from app.loaders import loaded_bars, parsed_report  # noqa: E402
 from robustness import charts  # noqa: E402
 from robustness.bars_loader import BarsFormatError  # noqa: E402
 from robustness.battery import ValidationFailed, run_battery, to_json  # noqa: E402
-from robustness.multiwalk_battery import NEFF_MIN, MultiWalkValidationFailed, mw_to_json, run_multiwalk_battery, wfc_quadrant  # noqa: E402
+from robustness.multiwalk_battery import NEFF_MIN, READINGS, MultiWalkValidationFailed, mw_to_json, run_multiwalk_battery  # noqa: E402
 from robustness.multiwalk_text import MultiWalkFormatError, parse_multiwalk_text  # noqa: E402
 from robustness.report_parser import ReportFormatError  # noqa: E402
 from robustness.walkforward_db import WalkforwardDBError, parse_walkforward_db  # noqa: E402
@@ -29,14 +29,14 @@ st.set_page_config(page_title="Strategy Robustness V2", layout="wide")
 
 PILL = {"pass": ("#2e8b57", "✓ PASS"), "fail": ("#c0392b", "✗ FAIL"), "score": ("#1f5fbf", "SCORE"),
         "reference": ("#9a9a94", "REFERENCE"), "insufficient": ("#9a9a94", "n < 30 - gate not applied"),
-        "insufficient_wfc": ("#9a9a94", "too few usable points - gate not applied"),
-        "not_informative": ("#9a9a94", "combinations nearly identical - gate not applied")}
+        "insufficient_wfc": ("#9a9a94", "no complete window - gate not applied"),
+        "plateau": ("#9a9a94", "PLATEAU - parameter choice immaterial, gate not applied")}
 MW_SCHEMES = {"multiwalk": "MultiWalk's windows", "two": "2 windows (thirds)", "single": "1 split (halves)"}
 
 
 def pill(verdict: str, extra: str = "") -> str:
     """Accepts a verdict key from PILL (pass | fail | score | reference | insufficient |
-    insufficient_wfc | not_informative) and optional extra text; returns the HTML span for the
+    insufficient_wfc | plateau) and optional extra text; returns the HTML span for the
     coloured pill. Guarantees every PILL key renders; any other key raises KeyError."""
     color, label = PILL[verdict]
     return (f'<span style="background:{color};color:white;padding:4px 12px;border-radius:14px;'
@@ -373,59 +373,105 @@ mm = mw.meta
 st.subheader(f"{mm['strategy'] or 'MultiWalk project'} · {mm['symbol']} {mm['interval']} · {mm['n_iter']} combinations on "
              f"{' × '.join(mm['param_names'])} ({' × '.join(str(s) for s in mm['shape'])}) · {mm['dates_start']:%Y-%m-%d} → {mm['dates_end']:%Y-%m-%d}")
 st.caption(f"{mm['group']} · windows: {MW_SCHEMES[mm['window_scheme']]} · metric: {mm['fitness']} ({mm['metric']}) · "
-           f"{mm['n_complete']} of {mm['n_windows']} windows complete · {mm['n_null']} null shifts, {mm['n_boot']} resamples, seed {mm['seed']}")
+           f"{mm['n_complete']} of {mm['n_windows']} windows complete · {mm['n_null']} null draws, {mm['n_boot']} resamples, seed {mm['seed']}")
 pick_label = mm["pick_label"]
-_not_applied = {"insufficient": "no complete window has enough usable combinations",
-                "not_informative": f"the combinations are nearly identical (≈ {mm['n_eff_median']:.1f} effective independent "
-                                   "variants), so a low correlation cannot separate over-fitting from nothing to rank"}
+rg = mw.region
+_plateau_why = (f"the combinations are too alike to score a region (≈ {mm['n_eff_median']:.1f} effective independent variants, "
+                f"{mm['n_distinct_median']:.0f} distinct out-of-sample patterns; {NEFF_MIN:g} and {2 * rg.k} needed)"
+                if not mm["wfc_scoreable"] else
+                "the in-sample top region did not beat the grid average out of sample while the grid as a whole made money")
+_not_applied = {"insufficient": "no complete walk-forward window",
+                "plateau": f"{_plateau_why}, so the parameter choice is immaterial and the strategy-level cards govern"}
 if mw.verdicts["wfc"] in _not_applied:
     st.markdown(f"**WFC gate not applied** - {_not_applied[mw.verdicts['wfc']]}. " + mw.caveat)
 else:
     st.markdown(f"**Gates passed: {mw.gates_passed} of {mw.gates_total}.** " + mw.caveat)
 with st.expander("Validation checks", expanded=not all(c.passed for c in mw.checks)):
     st.table([{"check": c.name, "ok": "✓" if c.passed else ("⚠" if c.severity == "warn" else "✗"), "detail": c.detail} for c in mw.checks])
+
+
+def _num(v: float, nd: int = 2):
+    """A table cell: the value rounded (an int at 0 decimals), None (blank) when not finite."""
+    return (int(round(v)) if nd == 0 else round(v, nd)) if math.isfinite(v) else None
+
+
 rows = []
-for w, pw, sw, wm in zip(mw.wfc.windows, mw.plateau.windows, mw.selection.windows, mm["windows"]):
-    rows.append({"window": w.label, "complete": "✓" if w.complete else "✗", "points": w.n_points,
-                 "IS trades": wm["is_trades_median"], "OOS trades": wm["oos_trades_median"], "Spearman ρ": round(w.spearman, 3),
-                 "Pearson r": round(w.pearson, 3), "p": w.p_value if w.null.size else None, "positive OOS share": round(w.pos_oos_frac, 2),
-                 "quadrant": wfc_quadrant(w, sw.n_eff), "plateau (OOS)": None if not math.isfinite(pw.score_oos) else round(pw.score_oos, 2), "pick deflated p": None if not math.isfinite(sw.p_pick) else sw.p_pick,
-                 "pick IS rank %": None if not math.isfinite(w.pick_is_pct) else round(w.pick_is_pct), "pick OOS rank %": None if not math.isfinite(w.pick_oos_pct) else round(w.pick_oos_pct)})
+for w, rw, pw, sw, wm in zip(mw.wfc.windows, rg.windows, mw.plateau.windows, mw.selection.windows, mm["windows"]):
+    rows.append({"window": w.label, "complete": "✓" if w.complete else "✗", "IS trades": wm["is_trades_median"],
+                 "OOS trades": wm["oos_trades_median"], "lift L (SD)": _num(rw.lift), "lift p": _num(rw.p_lift, 3),
+                 "reading": READINGS[wm["wfc_reading"]].split(" - ")[0], "precision": _num(rw.precision),
+                 "Spearman ρ": _num(w.spearman, 3), "ρ p": w.p_value if w.null.size else None, "points": w.n_points,
+                 "plateau (OOS)": _num(pw.score_oos), "pick deflated p": _num(sw.p_pick, 3),
+                 "pick IS rank %": _num(w.pick_is_pct, 0), "pick OOS rank %": _num(w.pick_oos_pct, 0)})
 st.dataframe(rows, width="stretch", hide_index=True)
 usable = [w for w in mw.wfc.windows if w.complete and not w.insufficient]
 chart_labels = [w.label for w in mw.wfc.windows]
-default_i = mw.wfc.windows.index(usable[-1]) if usable else 0
+complete_i = [i for i, w in enumerate(mw.wfc.windows) if w.complete]
+default_i = complete_i[-1] if complete_i else 0
 sel = st.selectbox("Window to chart", chart_labels, index=default_i)
 wi = chart_labels.index(sel)
-ww, pw, sw = mw.wfc.windows[wi], mw.plateau.windows[wi], mw.selection.windows[wi]
+ww, rw, pw, sw = mw.wfc.windows[wi], rg.windows[wi], mw.plateau.windows[wi], mw.selection.windows[wi]
 metric_label = "NP / avg DD" if mm["metric"] == "NPAvgDD" else "net profit $"
 
 wfc_verdict = {"insufficient": "insufficient_wfc"}.get(mw.verdicts["wfc"], mw.verdicts["wfc"])
-wfc_lines = [(f"pooled over **{len(usable)} complete window(s)**: Spearman ρ = **{mw.wfc.pooled_spearman:.2f}** → {_p3(mw.wfc.pooled_p)} (gate < 0.05); "
-              f"positive OOS among positive-IS combinations **{mw.wfc.pooled_pos_oos_frac:.0%}** (gate ≥ 50%)") if usable else "no complete window with enough usable points"]
-if math.isfinite(mm["n_eff_median"]):
-    wfc_lines.append(f"effective independent variants ≈ **{mm['n_eff_median']:.1f}** of {mm['n_iter']} (median over complete windows); "
-                     f"below {NEFF_MIN:g} a low correlation says nothing about over-fitting and the gate is not applied")
-for w, wm, sw_ in zip(mw.wfc.windows, mm["windows"], mw.selection.windows):
+reading = mm["wfc_reading"]
+if rg.n_complete:
+    wfc_lines = [f"region lift pooled over **{rg.n_complete} complete window(s)**: the in-sample top {rg.k} of {mm['n_iter']} combinations "
+                 f"(top 20% of the pooled in-sample surface) made **${rg.region_oos_mean:,.0f}** out of sample against the grid average "
+                 f"**${rg.grid_oos_mean:,.0f}** → L = **{rg.lift:+.2f} SD**, {_p3(rg.p_lift)} (gate < 0.05) → *{READINGS[reading]}*"]
+else:
+    wfc_lines = ["no complete window - the region lift has nothing to pool"]
+if rg.n_complete:
+    wfc_lines.append(f"effective independent variants ≈ **{mm['n_eff_median']:.1f}**, distinct out-of-sample patterns "
+                     f"**{mm['n_distinct_median']:.0f}** of {mm['n_iter']} (medians over complete windows); below {NEFF_MIN:g} variants "
+                     f"or {2 * rg.k} patterns a region cannot be scored"
+                     + ("" if mm["wfc_scoreable"] else " → **plateau branch, gate not applied**"))
+if math.isfinite(rg.precision):
+    wfc_lines.append(f"overlap: {rg.precision:.0%} of the region sits in the out-of-sample top 20% (chance: 20%), {_p3(rg.p_precision)}; "
+                     f"ridge (largest connected top-20% area) Jaccard in vs out of sample {rg.ridge_jaccard:.2f}, "
+                     f"its centre moved {rg.ridge_shift:.1f} grid steps")
+elif rg.n_complete:
+    wfc_lines.append(f"overlap not scored - too many identical variants out of sample; the ridge's centre moved {rg.ridge_shift:.1f} grid steps")
+if rg.n_complete:
+    wfc_lines.append(f"out-of-sample percentile of four picks (100 = better than every combination): best in-sample "
+                     f"{rg.pct_best_is:.0f} · best pooled in-sample {rg.pct_best_pooled:.0f} · region ensemble {rg.pct_region:.0f}"
+                     + (f" · {pick_label} {rg.pct_pick:.0f}" if math.isfinite(rg.pct_pick) else ""))
+if reading == "edge":
+    wfc_lines.append("pick: the peak of the pooled in-sample surface when there are 50+ out-of-sample trades per combination "
+                     "(on a one-cell ridge the raw peak wins)")
+elif reading == "plateau":
+    wfc_lines.append("pick: the centre of the grid or the region ensemble - chasing the in-sample peak buys nothing here")
+if mm["window_scheme"] == "multiwalk" and math.isfinite(mm["oos_trades_median"]) and mm["oos_trades_median"] < 20:
+    wfc_lines.append(f"only ~{mm['oos_trades_median']:.0f} out-of-sample trades per combination: below ~20 no statistic has power - "
+                     "2 windows (thirds) give longer out-of-sample blocks")
+wfc_lines.append((f"Tinsley's correlation (continuity, not the gate): pooled Spearman ρ = {mw.wfc.pooled_spearman:.2f}, "
+                  f"{_p3(mw.wfc.pooled_p)}; positive OOS among positive-IS combinations {mw.wfc.pooled_pos_oos_frac:.0%}")
+                 if usable else "Tinsley's correlation (continuity, not the gate): no complete window with enough usable points")
+for w, rw_, wm in zip(mw.wfc.windows, rg.windows, mm["windows"]):
     trades_txt = f"~{wm['is_trades_median']}/{wm['oos_trades_median']} trades per combination in/out"
     tn = top_n_summary(w)
     top_txt = (f"; top {tn.n} in-sample → median out-of-sample rank {tn.median_oos_rank:.0f} of {tn.n_valid}, "
                f"{tn.n_positive_oos} of {tn.n} profitable" if tn.n else "")
-    wfc_lines.append(f"{w.label}: ρ = {w.spearman:.2f} (Pearson {w.pearson:.2f}), {_p3(w.p_value) if w.null.size else 'too few points'}, "
-                     f"{w.n_points} points, {trades_txt} → *{wfc_quadrant(w, sw_.n_eff)}*; {pick_label}: IS rank {_rank(w.pick_is_pct, w.n_points)}, "
-                     f"OOS rank {_rank(w.pick_oos_pct, w.n_points)}{top_txt}"
-                     if math.isfinite(w.pick_is_pct) else f"{w.label}: ρ = {w.spearman:.2f}, {w.n_points} points, {trades_txt}")
+    region_txt = f"L = {rw_.lift:+.2f} ({_p3(rw_.p_lift)}) → *{READINGS[wm['wfc_reading']].split(' - ')[0]}*"
+    wfc_lines.append(f"{w.label}: {region_txt}; ρ = {w.spearman:.2f} (Pearson {w.pearson:.2f}), "
+                     f"{_p3(w.p_value) if w.null.size else 'too few points'}, {w.n_points} points, {trades_txt}; "
+                     f"{pick_label}: IS rank {_rank(w.pick_is_pct, w.n_points)}, OOS rank {_rank(w.pick_oos_pct, w.n_points)}{top_txt}"
+                     if math.isfinite(w.pick_is_pct) else f"{w.label}: {region_txt}; ρ = {w.spearman:.2f}, {w.n_points} points, {trades_txt}")
 if mw.wfc_np is not None and usable:
-    wfc_lines.append(f"same test on net profit: pooled ρ = {mw.wfc_np.pooled_spearman:.2f}, {_p3(mw.wfc_np.pooled_p)}")
+    wfc_lines.append(f"same correlation on net profit: pooled ρ = {mw.wfc_np.pooled_spearman:.2f}, {_p3(mw.wfc_np.pooled_p)}")
 top_ww = top_n_summary(ww)
-param_labels = [" / ".join(f"{n}={v:g}" for n, v in zip(mm["param_names"], row)) for row in _mw_grid(txt_bytes).params]
-wfc_tabs = {"Scatter": charts.fig_wfc_scatter(ww, metric_label, pick_label=pick_label, top=top_ww.indices),
+mw_grid = _mw_grid(txt_bytes)
+param_labels = [" / ".join(f"{n}={v:g}" for n, v in zip(mm["param_names"], row)) for row in mw_grid.params]
+wfc_tabs = {"Surface": charts.fig_region_surfaces(rw, mw_grid.grid_pos, mw_grid.axes, mm["param_names"]),
+            "Scatter": charts.fig_wfc_scatter(ww, metric_label, pick_label=pick_label, top=top_ww.indices),
             "Ranked profile": charts.fig_wfc_profile(ww, metric_label, top_ww.indices, labels=param_labels)}
 if top_ww.n_valid >= 100:   # below that the ranked profile already shows every point
     wfc_tabs["Bands"] = charts.fig_wfc_bands(wfc_bands(ww), metric_label)
+if rw.null_lift.size:
+    wfc_tabs["Null (lift)"] = charts.fig_region_null(rw)
 if ww.null.size:
-    wfc_tabs["Null"] = charts.fig_wfc_null(ww)
-card("wfc", wfc_verdict, wfc_lines, tabs=wfc_tabs, extra=f"ρ = {mw.wfc.pooled_spearman:.2f}" if usable else "")
+    wfc_tabs["Null (ρ)"] = charts.fig_wfc_null(ww)
+card("wfc", wfc_verdict, wfc_lines, tabs=wfc_tabs, extra=f"L = {rg.lift:+.2f}" if rg.n_complete else "")
 
 pl_lines = [f"pooled plateau score **{mw.plateau.pooled_score:.2f}** over {mw.plateau.n_complete} complete window(s) (1 = flat and all neighbours profitable, 0 = spike)"
             if math.isfinite(mw.plateau.pooled_score) else "pooled plateau score n/a - no complete window has enough usable points"]

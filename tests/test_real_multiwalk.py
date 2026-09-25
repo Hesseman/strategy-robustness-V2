@@ -75,14 +75,43 @@ def test_drawdown_definitions_reproduce_multiwalks_report():
 def test_real_battery_runs_and_prints(grid, groups):
     from robustness.multiwalk_battery import run_multiwalk_battery
     r = run_multiwalk_battery(grid, groups, n_null=999, n_boot=200, seed=0)
-    assert r.meta["n_complete"] == 2 and r.verdicts["wfc"] in ("pass", "fail", "not_informative")
-    assert r.verdicts["wfc"] != "not_informative" or r.meta["n_eff_median"] < 3.0
+    assert r.meta["n_complete"] == 2 and r.verdicts["wfc"] in ("pass", "fail", "plateau")
+    assert r.meta["wfc_scoreable"] or r.verdicts["wfc"] == "plateau"
     w = r.wfc.windows
-    print("REAL MULTIWALK:", r.verdicts, "pooled rho=", round(r.wfc.pooled_spearman, 3), "p=", r.wfc.pooled_p,
+    print("REAL MULTIWALK:", r.verdicts, r.meta["wfc_reading"], "lift=", round(r.region.lift, 3), "p=", r.region.p_lift,
+          "| pooled rho=", round(r.wfc.pooled_spearman, 3), "p=", r.wfc.pooled_p,
           "posOOS=", round(r.wfc.pooled_pos_oos_frac, 3), "| per window rho=", [round(x.spearman, 3) for x in w],
-          "p=", [x.p_value for x in w], "quadrant=", [x.quadrant for x in w],
-          "| plateau=", [round(p.score_oos, 2) for p in r.plateau.windows], "| p_pick=", [s.p_pick for s in r.selection.windows],
+          "p=", [x.p_value for x in w], "| plateau=", [round(p.score_oos, 2) for p in r.plateau.windows],
+          "| p_pick=", [s.p_pick for s in r.selection.windows],
           "n_eff=", [round(s.n_eff, 1) for s in r.selection.windows], "n_eff_median=", round(r.meta["n_eff_median"], 2))
+
+
+def test_region_layer_reproduces_the_notes_le2601_row_and_reads_plateau(grid, groups):
+    """Oracle from docs/research/2026-09-25-wfc-region-concordance.md § 3 (LE2601, net profit,
+    sign-flip null, 499 draws, seed 0 - the prototype's settings): MultiWalk's windows give a
+    top-20% lift of +0.32 SD at p = 0.156, overlap precision 0.29 (p 0.30), ridge Jaccard 0.21 and
+    a 2.9-step ridge shift; the 'two' scheme +0.32 at p = 0.17, precision 0.44 (p 0.092). The
+    production module draws exactly as the prototype did, so the p-values reproduce to the draw.
+    Through the battery (999 draws) the lift stays insignificant and N_eff ~1.5 takes the plateau
+    branch anyway."""
+    from robustness.multiwalk_battery import run_multiwalk_battery
+    from robustness.region_wfc import region_test
+    from robustness.windows import custom_windows, derive_windows
+    mw = region_test(grid, derive_windows(groups[0], grid.dates), n_null=499, seed=0)
+    assert mw.n_complete == 2 and mw.k == 48
+    assert mw.lift == pytest.approx(0.32, abs=0.005) and mw.p_lift == pytest.approx(0.156)
+    assert mw.precision == pytest.approx(0.29, abs=0.005) and mw.p_precision == pytest.approx(0.302)
+    assert mw.ridge_jaccard == pytest.approx(0.21, abs=0.005) and mw.ridge_shift == pytest.approx(2.9, abs=0.05)
+    two_windows = custom_windows(grid.dates, "two")
+    two = region_test(grid, two_windows, n_null=499, seed=0)
+    assert two.lift == pytest.approx(0.32, abs=0.005) and two.p_lift == pytest.approx(0.172)
+    assert two.precision == pytest.approx(0.44, abs=0.005) and two.p_precision == pytest.approx(0.092)
+    r = run_multiwalk_battery(grid, groups, n_null=999, n_boot=50, seed=0)
+    assert r.region.lift == pytest.approx(mw.lift) and 0.10 <= r.region.p_lift <= 0.25
+    assert r.meta["n_eff_median"] < 3.0 and r.meta["wfc_scoreable"] is False
+    assert r.meta["wfc_reading"] == "plateau" and r.verdicts["wfc"] == "plateau" and r.gates_passed == 0
+    print("LE2601 region lift: MultiWalk windows", round(mw.lift, 3), "p", mw.p_lift, "precision", round(mw.precision, 3),
+          "| two", round(two.lift, 3), "p", two.p_lift, "| battery p (999)", r.region.p_lift, r.meta["wfc_reading"])
 
 
 def test_signflip_null_takes_le2601_off_the_torus_pass(grid, groups):

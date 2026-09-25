@@ -53,6 +53,9 @@ def test_three_windows_pool_over_the_complete_two_and_still_report_the_incubatio
     assert r.wfc.windows[2].n_points > 0            # 100 OOS days, a trade every 7 days: still usable
     assert math.isfinite(r.wfc.pooled_p) and 0 < r.wfc.pooled_p <= 1
     assert r.wfc.n_null == 60 and r.plateau.n_complete == 2
+    assert r.region.n_complete == 2 and len(r.region.windows) == 3 and math.isfinite(r.region.windows[2].lift)
+    assert r.region.lift == np.mean([r.region.windows[0].lift, r.region.windows[1].lift])   # the incubation window is not pooled
+    assert [w["wfc_reading"] for w in r.meta["windows"]][:2] == ["edge", "edge"] and r.verdicts["wfc"] == "pass"
 
     figs = (charts.fig_wfc_scatter(r.wfc.windows[2], "NP"), charts.fig_wfc_null(r.wfc.windows[2]),
             charts.fig_plateau(r.plateau.windows[2], r.meta["param_names"], r.meta["windows"][2]["params"]),
@@ -66,7 +69,8 @@ def test_nothing_usable_reports_nan_everywhere_and_still_serialises():
     grid, groups = _inputs()
     r = run_multiwalk_battery(grid, groups, n_null=60, n_boot=30, seed=0, min_trades=10**6)
 
-    assert r.verdicts["wfc"] == "insufficient"
+    assert r.wfc.reasons == ["wfc_insufficient"] and math.isnan(r.wfc.pooled_p)   # the continuity correlation has nothing left
+    assert r.verdicts["wfc"] != "insufficient" and r.region.n_complete == 2         # the region lift has no trade-count hole
     assert all(math.isnan(p.score_oos) for p in r.plateau.windows)
     assert math.isnan(r.plateau.pooled_score)
 

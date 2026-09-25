@@ -17,7 +17,7 @@ MultiWalk optimisation instead — see "MultiWalk surface tests (optional)" belo
 | Drawdown & capital | CDaR-80, capital = 5 × CDaR-80, annual % | reference |
 | Entry delay | does the edge live in the first bars after the signal? | reference (timing section) |
 | Exit delay | is the exit precisely timed? | reference (timing section) |
-| WFC — Walk Forward Correlation | did in-sample results predict out-of-sample results across the whole parameter grid? | gate: pooled p < 0.05 and ≥ half of the positive-IS combinations positive OOS (MultiWalk section, optional) |
+| WFC — Walk Forward Correlation | did the region of the parameter grid that was best in-sample beat the grid average out-of-sample? | gate: region lift p < 0.05 with the region profitable OOS; plateau (not applied) when the parameter choice is immaterial (MultiWalk section, optional) |
 | Plateau | does the chosen parameter set sit on a plateau or a spike? | score 0–1 (MultiWalk section, optional) |
 | Selection haircut | how good does the best of N look when there is nothing to find? | reference (MultiWalk section, optional) |
 
@@ -92,20 +92,31 @@ from `Walkforward Files`. Nothing else is needed - these tests use no bars and n
 
 What the three cards mean:
 
-- **WFC (Walk Forward Correlation)** — gate: whether in-sample results predicted
-  out-of-sample results across the whole parameter grid, not just for the one combination
-  MultiWalk picked; pooled p < 0.05 and at least half of the in-sample-positive combinations
-  stayed positive out-of-sample. The null re-draws the out-of-sample surface by flipping the
-  sign of each three-week block's deviations from the grid's daily average, so how alike
-  neighbouring combinations are is kept (a grid shift, the earlier null, is not: it passed
-  10-30% of no-structure grids). When the combinations are nearly identical (fewer than 3
-  effective independent variants) a low correlation cannot tell over-fitting from "nothing to
-  rank", so the card reads **not informative** and the gate is not applied. Tabs: a scatter
-  with a green best-fit line (Tinsley's chart),
-  a ranked profile (combinations sorted by in-sample result, in-sample rank as a line and
+- **WFC (Walk Forward Correlation)** — gate: whether the region of the grid that was best
+  in-sample beat the grid average out-of-sample, not just the one combination MultiWalk picked.
+  Per window, on net profit: each combination's in-sample result is averaged with its one-step
+  neighbours (the pooled surface) and the top 20% of that surface is the region; its **lift** =
+  (the region's mean out-of-sample net profit − the grid's) ÷ the spread across the grid, in
+  SDs. The null re-draws the out-of-sample surface by flipping the sign of each three-week
+  block's deviations from the grid's daily average, so how alike neighbouring combinations
+  are is kept (a grid shift, the earlier null, is not: it passed 10-30% of no-structure grids).
+  Verdict: lift significant (pooled p < 0.05) and the region profitable out-of-sample →
+  **PASS** (a structural edge, localised in the region); significant but the region loses, or
+  not significant while the whole grid lost → **FAIL**; not significant while the grid made
+  money → **plateau**: the parameter choice is immaterial and the five cards above govern (gate
+  not applied). A grid whose combinations are nearly one strategy (fewer than 3 effective
+  independent variants) or repeat out-of-sample (fewer distinct results than twice the region)
+  is not scored and reads plateau too. Why a region and not a correlation over every
+  combination: the flat majority of a grid dilutes a ridge that persists, so Tinsley's
+  correlation — still shown, with the same null — is kept for continuity, never as the gate.
+  No minimum trade count per combination; below about 20 out-of-sample trades per combination
+  nothing has power — use 2 windows. Tabs: the surface (in- and out-of-sample heatmaps, raw and pooled, the
+  largest connected top-20% area outlined; grids of 3+ parameters sliced through the best
+  pooled in-sample combination), a scatter with a green best-fit line (Tinsley's chart), a
+  ranked profile (combinations sorted by in-sample result, in-sample rank as a line and
   out-of-sample rank as dots on the same chart), bands (100+ combinations: mean out-of-sample
-  result per tenth of the in-sample ranking) and the null; the top in-sample combinations are
-  outlined in red.
+  result per tenth of the in-sample ranking) and the two nulls; the top in-sample combinations
+  are outlined in red.
 - **Plateau** — score 0–1: whether the chosen parameter set sits on a plateau of neighbours
   that also worked out-of-sample (flat and positive), or on an isolated spike (0 = spike).
 - **Selection haircut** — reference: how much of the best-of-N in-sample result a
