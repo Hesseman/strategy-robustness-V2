@@ -13,6 +13,8 @@ from robustness.walkforward_db import WFGroup
 
 _OFFSET = {"Day": lambda n: pd.DateOffset(days=n), "Week": lambda n: pd.DateOffset(weeks=n),
            "Month": lambda n: pd.DateOffset(months=n), "Year": lambda n: pd.DateOffset(years=n)}
+# 'multiwalk' = the DB schedule and MultiWalk's picks; 'two' / 'single' = custom_windows below
+SCHEMES = ("multiwalk", "two", "single")
 
 
 @dataclass
@@ -63,4 +65,34 @@ def derive_windows(group: WFGroup, dates: pd.DatetimeIndex, *, min_complete_frac
         out.append(Window(index=i, label=label, is_start=pd.Timestamp(is_start), is_end=pd.Timestamp(is_end),
                           oos_start=w.oos_start, oos_end_nominal=w.oos_end, oos_end=pd.Timestamp(oos_end),
                           is_mask=is_mask, oos_mask=oos_mask, complete=complete, grid_row=w.grid_row, params=w.params))
+    return out
+
+
+def custom_windows(dates: pd.DatetimeIndex, scheme: str) -> list[Window]:
+    """Windows that ignore MultiWalk's schedule, for strategies with too few trades per window.
+
+    Accepts: the optimisation's trading days and scheme 'single' (one split: in-sample = the first
+    half of the days, out-of-sample = the second half) or 'two' (three equal blocks of days: IS
+    block 1 -> OOS block 2, IS block 2 -> OOS block 3; unanchored, equal lengths).
+    Returns: complete Windows with 1-based index, grid_row 0 and params () - the caller sets the
+    pick (the best in-sample variant) once the metric is known.
+    Guarantees: IS and OOS masks never overlap and together cover their blocks exactly; fixed
+    rules, no tunable split; raises ValueError for another scheme or fewer than 6 trading days."""
+    if scheme not in ("single", "two"):
+        raise ValueError(f"scheme must be 'single' or 'two', got {scheme!r}")
+    n = len(dates)
+    if n < 6:
+        raise ValueError(f"need at least 6 trading days, got {n}")
+    cuts = [0, n // 2, n] if scheme == "single" else [0, n // 3, 2 * n // 3, n]
+    out: list[Window] = []
+    for i in range(1, len(cuts) - 1):
+        a, b, c = cuts[i - 1], cuts[i], cuts[i + 1]
+        is_mask, oos_mask = np.zeros(n, dtype=bool), np.zeros(n, dtype=bool)
+        is_mask[a:b], oos_mask[b:c] = True, True
+        prefix = "split" if scheme == "single" else f"window {i}"
+        label = f"{prefix}: IS {dates[a]:%Y-%m-%d} → {dates[b - 1]:%Y-%m-%d}, OOS {dates[b]:%Y-%m-%d} → {dates[c - 1]:%Y-%m-%d}"
+        out.append(Window(index=i, label=label, is_start=pd.Timestamp(dates[a]), is_end=pd.Timestamp(dates[b - 1]),
+                          oos_start=pd.Timestamp(dates[b]), oos_end_nominal=pd.Timestamp(dates[c - 1]),
+                          oos_end=pd.Timestamp(dates[c - 1]), is_mask=is_mask, oos_mask=oos_mask, complete=True,
+                          grid_row=0, params=()))
     return out

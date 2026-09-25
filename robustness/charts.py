@@ -88,13 +88,14 @@ def fig_episode_hist(dd: DrawdownResult) -> go.Figure:
     return fig
 
 
-def fig_wfc_scatter(w: WFCWindow, metric_label: str) -> go.Figure:
-    """In-sample vs out-of-sample metric per parameter combination, MultiWalk's pick highlighted, zero lines."""
+def fig_wfc_scatter(w: WFCWindow, metric_label: str, pick_label: str = "MultiWalk's pick") -> go.Figure:
+    """In-sample vs out-of-sample metric per parameter combination, the window's pick highlighted
+    (named pick_label), zero lines."""
     m = np.isfinite(w.x) & np.isfinite(w.y)
     fig = go.Figure(go.Scatter(x=w.x[m], y=w.y[m], mode="markers", marker=dict(color=MUTED, size=7, opacity=0.75), name="combinations"))
     if np.isfinite(w.x[w.pick_index]) and np.isfinite(w.y[w.pick_index]):
         fig.add_trace(go.Scatter(x=[w.x[w.pick_index]], y=[w.y[w.pick_index]], mode="markers",
-                                 marker=dict(color=RED, size=13, symbol="diamond"), name="MultiWalk's pick"))
+                                 marker=dict(color=RED, size=13, symbol="diamond"), name=pick_label))
     fig.add_hline(y=0, line_color=ACCENT, line_width=1); fig.add_vline(x=0, line_color=ACCENT, line_width=1)
     fig.update_layout(**_LAYOUT, xaxis_title=f"in-sample {metric_label}", yaxis_title=f"out-of-sample {metric_label}")
     return fig

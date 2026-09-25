@@ -29,6 +29,7 @@ st.set_page_config(page_title="Strategy Robustness V2", layout="wide")
 PILL = {"pass": ("#2e8b57", "✓ PASS"), "fail": ("#c0392b", "✗ FAIL"), "score": ("#1f5fbf", "SCORE"),
         "reference": ("#9a9a94", "REFERENCE"), "insufficient": ("#9a9a94", "n < 30 - gate not applied"),
         "insufficient_wfc": ("#9a9a94", "too few usable points - gate not applied")}
+MW_SCHEMES = {"multiwalk": "MultiWalk's windows", "two": "2 windows (thirds)", "single": "1 split (halves)"}
 
 
 def pill(verdict: str, extra: str = "") -> str:
@@ -126,8 +127,9 @@ def _mw_groups(db_bytes: bytes):
 
 
 @st.cache_data(show_spinner="Running the surface tests...")
-def _mw_battery(txt_bytes: bytes, db_bytes: bytes, group_no: int, n_boot: int, seed: int):
-    return run_multiwalk_battery(_mw_grid(txt_bytes), _mw_groups(db_bytes), group_no=group_no, n_boot=n_boot, seed=seed)
+def _mw_battery(txt_bytes: bytes, db_bytes: bytes, group_no: int, n_boot: int, seed: int, scheme: str):
+    return run_multiwalk_battery(_mw_grid(txt_bytes), _mw_groups(db_bytes), group_no=group_no, n_boot=n_boot, seed=seed,
+                                 window_scheme=scheme)
 
 
 @st.cache_data(show_spinner=False)
@@ -318,6 +320,8 @@ with st.expander("What this needs and how to get the two files", expanded=True):
 c1, c2 = st.columns(2)
 up_txt = c1.file_uploader("Optimisation text file (…_MultiWalk.txt)", type=["txt"], help=_md(HELP["mw_files"]), key="mw_txt")
 up_db = c2.file_uploader("Walk-forward database (WalkforwardData.db)", type=["db"], help=_md(HELP["mw_files"]), key="mw_db")
+mw_scheme = st.radio("Walk-forward windows", options=list(MW_SCHEMES), format_func=MW_SCHEMES.get, key="mw_windows",
+                     horizontal=True, help=_md(HELP["mw_windows"]))
 b1, b2, b3, b4 = st.columns(4)
 n_boot = b1.select_slider("Resamples (selection haircut)", options=[200, 500, 1000], value=500, help=HELP["n_boot"])
 if mw_sample and b2.button("Load MultiWalk sample (dev)"):
@@ -346,7 +350,7 @@ try:
     if len(groups) > 1:
         labels = {g.label: g.group_no for g in groups}
         group_no = labels[st.selectbox("Walk-forward group", list(labels))]
-    mw = _mw_battery(txt_bytes, db_bytes, int(group_no), int(n_boot), int(seed))
+    mw = _mw_battery(txt_bytes, db_bytes, int(group_no), int(n_boot), int(seed), str(mw_scheme))
 except MultiWalkFormatError as e:
     st.error(f"Text file not readable: {e}"); st.stop()
 except WalkforwardDBError as e:
@@ -360,14 +364,16 @@ except Exception as e:
 mm = mw.meta
 st.subheader(f"{mm['strategy'] or 'MultiWalk project'} · {mm['symbol']} {mm['interval']} · {mm['n_iter']} combinations on "
              f"{' × '.join(mm['param_names'])} ({' × '.join(str(s) for s in mm['shape'])}) · {mm['dates_start']:%Y-%m-%d} → {mm['dates_end']:%Y-%m-%d}")
-st.caption(f"{mm['group']} · metric: {mm['fitness']} ({mm['metric']}) · {mm['n_complete']} of {mm['n_windows']} windows complete · "
-           f"{mm['n_null']} null shifts, {mm['n_boot']} resamples, seed {mm['seed']}")
+st.caption(f"{mm['group']} · windows: {MW_SCHEMES[mm['window_scheme']]} · metric: {mm['fitness']} ({mm['metric']}) · "
+           f"{mm['n_complete']} of {mm['n_windows']} windows complete · {mm['n_null']} null shifts, {mm['n_boot']} resamples, seed {mm['seed']}")
+pick_label = mm["pick_label"]
 st.markdown(f"**Gates passed: {mw.gates_passed} of {mw.gates_total}.** " + mw.caveat)
 with st.expander("Validation checks", expanded=not all(c.passed for c in mw.checks)):
     st.table([{"check": c.name, "ok": "✓" if c.passed else ("⚠" if c.severity == "warn" else "✗"), "detail": c.detail} for c in mw.checks])
 rows = []
-for w, pw, sw in zip(mw.wfc.windows, mw.plateau.windows, mw.selection.windows):
-    rows.append({"window": w.label, "complete": "✓" if w.complete else "✗", "points": w.n_points, "Spearman ρ": round(w.spearman, 3),
+for w, pw, sw, wm in zip(mw.wfc.windows, mw.plateau.windows, mw.selection.windows, mm["windows"]):
+    rows.append({"window": w.label, "complete": "✓" if w.complete else "✗", "points": w.n_points,
+                 "IS trades": wm["is_trades_median"], "OOS trades": wm["oos_trades_median"], "Spearman ρ": round(w.spearman, 3),
                  "Pearson r": round(w.pearson, 3), "p": w.p_value if w.null.size else None, "positive OOS share": round(w.pos_oos_frac, 2),
                  "quadrant": w.quadrant, "plateau (OOS)": None if not math.isfinite(pw.score_oos) else round(pw.score_oos, 2), "pick deflated p": None if not math.isfinite(sw.p_pick) else sw.p_pick,
                  "pick IS rank %": None if not math.isfinite(w.pick_is_pct) else round(w.pick_is_pct), "pick OOS rank %": None if not math.isfinite(w.pick_oos_pct) else round(w.pick_oos_pct)})
@@ -383,13 +389,15 @@ metric_label = "NP / avg DD" if mm["metric"] == "NPAvgDD" else "net profit $"
 wfc_verdict = mw.verdicts["wfc"] if mw.verdicts["wfc"] != "insufficient" else "insufficient_wfc"
 wfc_lines = [(f"pooled over **{len(usable)} complete window(s)**: Spearman ρ = **{mw.wfc.pooled_spearman:.2f}** → {_p3(mw.wfc.pooled_p)} (gate < 0.05); "
               f"positive OOS among positive-IS combinations **{mw.wfc.pooled_pos_oos_frac:.0%}** (gate ≥ 50%)") if usable else "no complete window with enough usable points"]
-for w in mw.wfc.windows:
+for w, wm in zip(mw.wfc.windows, mm["windows"]):
+    trades_txt = f"~{wm['is_trades_median']}/{wm['oos_trades_median']} trades per combination in/out"
     wfc_lines.append(f"{w.label}: ρ = {w.spearman:.2f} (Pearson {w.pearson:.2f}), {_p3(w.p_value) if w.null.size else 'too few points'}, "
-                     f"{w.n_points} points → *{w.quadrant}*; MultiWalk's pick: IS rank {_rank(w.pick_is_pct, w.n_points)}, OOS rank {_rank(w.pick_oos_pct, w.n_points)}"
-                     if math.isfinite(w.pick_is_pct) else f"{w.label}: ρ = {w.spearman:.2f}, {w.n_points} points")
+                     f"{w.n_points} points, {trades_txt} → *{w.quadrant}*; {pick_label}: IS rank {_rank(w.pick_is_pct, w.n_points)}, "
+                     f"OOS rank {_rank(w.pick_oos_pct, w.n_points)}"
+                     if math.isfinite(w.pick_is_pct) else f"{w.label}: ρ = {w.spearman:.2f}, {w.n_points} points, {trades_txt}")
 if mw.wfc_np is not None and usable:
     wfc_lines.append(f"same test on net profit: pooled ρ = {mw.wfc_np.pooled_spearman:.2f}, {_p3(mw.wfc_np.pooled_p)}")
-card("wfc", wfc_verdict, wfc_lines, charts.fig_wfc_scatter(ww, metric_label), charts.fig_wfc_null(ww) if ww.null.size else None,
+card("wfc", wfc_verdict, wfc_lines, charts.fig_wfc_scatter(ww, metric_label, pick_label=pick_label), charts.fig_wfc_null(ww) if ww.null.size else None,
      extra=f"ρ = {mw.wfc.pooled_spearman:.2f}" if usable else "")
 
 pl_lines = [f"pooled plateau score **{mw.plateau.pooled_score:.2f}** over {mw.plateau.n_complete} complete window(s) (1 = flat and all neighbours profitable, 0 = spike)"
@@ -406,6 +414,6 @@ for s in mw.selection.windows:
     if s.insufficient:
         se_lines.append(f"{s.label}: not run (incomplete window or too few in-sample days)"); continue
     se_lines.append(f"{s.label}: best of {s.n_iter} in-sample = combination {s.best_index + 1} at **${s.best_mean:,.1f}/day**, deflated {_p3(s.p_best)}; "
-                    f"MultiWalk's pick ${s.pick_mean:,.1f}/day, deflated {_p3(s.p_pick)}; effective independent variants ≈ **{s.n_eff:.1f}** of {s.n_iter}")
+                    f"{pick_label} ${s.pick_mean:,.1f}/day, deflated {_p3(s.p_pick)}; effective independent variants ≈ **{s.n_eff:.1f}** of {s.n_iter}")
 card("selection", "reference", se_lines, charts.fig_selection(sw))
 st.download_button("Download MultiWalk results (JSON)", data=mw_to_json(mw), file_name="multiwalk_surface_results.json", mime="application/json")

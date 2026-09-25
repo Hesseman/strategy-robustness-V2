@@ -89,3 +89,19 @@ def test_unknown_group_no_is_a_validation_error():
     with pytest.raises(MultiWalkValidationFailed) as e:
         run_multiwalk_battery(grid, groups, group_no=999, n_null=20, n_boot=10)
     assert e.value.checks[0].name == "group_found"
+
+
+def test_custom_window_schemes_pick_the_best_in_sample_variant():
+    grid, groups, _ = _inputs("persistent", n_days=900)
+    mw = run_multiwalk_battery(grid, groups, n_null=50, n_boot=20, seed=0)
+    assert mw.meta["window_scheme"] == "multiwalk" and mw.meta["pick_label"] == "MultiWalk's pick"
+    for scheme, n_windows in (("single", 1), ("two", 2)):
+        r = run_multiwalk_battery(grid, groups, n_null=50, n_boot=20, seed=0, window_scheme=scheme)
+        assert r.meta["window_scheme"] == scheme and r.meta["pick_label"] == "best in-sample"
+        assert r.meta["n_windows"] == n_windows == len(r.wfc.windows) and r.meta["n_complete"] == n_windows
+        for w, mwin in zip(r.wfc.windows, r.meta["windows"]):
+            assert w.pick_index == int(np.nanargmax(w.x))
+            assert tuple(mwin["params"]) == tuple(grid.params[w.pick_index])
+            assert mwin["is_trades_median"] > 0 and mwin["oos_trades_median"] > 0
+    with pytest.raises(ValueError):
+        run_multiwalk_battery(grid, groups, n_null=10, n_boot=10, window_scheme="weekly")

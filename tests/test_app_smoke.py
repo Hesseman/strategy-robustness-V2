@@ -104,6 +104,19 @@ def test_app_renders_multiwalk_section_on_sample(tmp_path, monkeypatch):
     assert re.search(r"(?<!\\)\$\d", joined) is None, "an unescaped dollar amount reached st.markdown"
 
 
+def test_multiwalk_window_choice_rerenders_with_trade_counts(tmp_path, monkeypatch):
+    monkeypatch.setenv("SR_SAMPLE_MW_DIR", str(_write_mw_sample(tmp_path)))
+    at = AppTest.from_file(APP, default_timeout=240)
+    at.session_state["mw_sample"] = True
+    at.run()
+    assert "windows: MultiWalk's windows" in " ".join(c.value for c in at.caption)
+    for scheme, label in (("single", "split: IS"), ("two", "window 2: IS")):
+        at.radio(key="mw_windows").set_value(scheme).run()
+        assert not at.exception, [str(e) for e in at.exception]
+        joined = "\n".join(el.value for el in at.markdown)
+        assert label in joined and "trades per combination in/out" in joined and "best in-sample" in joined
+
+
 def test_capital_radio_switches_the_drawdown_line(tmp_path, monkeypatch):
     report, bars_file = _write_sample(tmp_path)
     monkeypatch.setenv("SR_SAMPLE_REPORT", str(report)); monkeypatch.setenv("SR_SAMPLE_BARS", str(bars_file))
