@@ -145,6 +145,70 @@ def wfc_window(x: np.ndarray, y: np.ndarray, window: Window, shifter: _Shifter, 
                      quadrant=_quadrant(p < alpha, pos_oos_frac >= tau_pos), insufficient=insufficient)
 
 
+def top_n_default(n_valid: int) -> int:
+    """How many of the best in-sample combinations to follow out-of-sample: 10, but never more
+    than a third of the valid points (at least 1)."""
+    return min(10, max(1, n_valid // 3))
+
+
+@dataclass
+class TopN:
+    n: int
+    indices: list[int]            # iteration indices, best in-sample first
+    median_oos_rank: float        # 1 = best out-of-sample among the valid points
+    n_valid: int
+    n_positive_oos: int
+
+
+def top_n_summary(w: WFCWindow, n: int | None = None) -> TopN:
+    """Where the best in-sample combinations landed out-of-sample.
+
+    Accepts: a WFCWindow and n (default top_n_default of the valid points).
+    Returns: TopN over the points finite on both sides - the n best by in-sample metric (ties
+    keep grid order), their median out-of-sample rank (1 = best, average ranks for ties) and how
+    many were profitable out-of-sample.
+    Guarantees: n <= valid points; n = 0 with a NaN median when nothing is valid. The WFC
+    correlation itself still uses every combination - this only follows the winners."""
+    idx = np.flatnonzero(_finite(w.x, w.y))
+    if idx.size == 0:
+        return TopN(0, [], float("nan"), 0, 0)
+    k = min(top_n_default(idx.size) if n is None else n, idx.size)
+    best = idx[np.argsort(-w.x[idx], kind="stable")][:k]
+    oos_rank = dict(zip(idx.tolist(), pd.Series(-w.y[idx]).rank().to_numpy()))
+    return TopN(n=int(k), indices=best.tolist(), median_oos_rank=float(np.median([oos_rank[i] for i in best])),
+                n_valid=int(idx.size), n_positive_oos=int((w.y[best] > 0).sum()))
+
+
+@dataclass
+class Band:
+    band: int                     # 1 = the best tenth in-sample
+    n: int
+    is_mean: float
+    oos_mean: float
+    oos_se: float                 # standard error of oos_mean; NaN for a single point
+    oos_pos_share: float
+
+
+def wfc_bands(w: WFCWindow, n_bands: int = 10) -> list[Band]:
+    """The in-sample ranking cut into n_bands bands (band 1 = best) with each band's mean
+    out-of-sample metric - readable at any grid size, where a scatter of thousands of points is not.
+
+    Accepts: a WFCWindow and the number of bands. Returns: one Band per band over the points
+    finite on both sides; [] when there are fewer valid points than bands.
+    Guarantees: every valid point is in exactly one band and band sizes differ by at most one."""
+    idx = np.flatnonzero(_finite(w.x, w.y))
+    if idx.size < n_bands:
+        return []
+    order = idx[np.argsort(-w.x[idx], kind="stable")]
+    out = []
+    for b, chunk in enumerate(np.array_split(order, n_bands), 1):
+        y = w.y[chunk]
+        se = float(y.std(ddof=1) / np.sqrt(y.size)) if y.size > 1 else float("nan")
+        out.append(Band(band=b, n=int(chunk.size), is_mean=float(w.x[chunk].mean()), oos_mean=float(y.mean()),
+                        oos_se=se, oos_pos_share=float((y > 0).mean())))
+    return out
+
+
 def wfc_test(pairs: list[tuple[np.ndarray, np.ndarray]], windows: list[Window], grid: MultiWalkGrid, *, metric: str,
              alpha: float = 0.05, tau_pos: float = 0.5, n_null: int = 999, seed: int = 0) -> WFCResult:
     """WFC over all windows plus the pooled gate.

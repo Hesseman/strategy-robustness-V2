@@ -2,7 +2,7 @@
 CARDS = {
     "baseline": {
         "title": "Baseline - edge is measured against the drift, not against zero",
-        "tagline": "Every card below scores lift = the strategy's return minus what random timing earns",
+        "tagline": "The T8a, T3 and T7 cards below score lift = the strategy's return minus what random timing earns",
         "catches": "A long strategy on a rising market shows positive returns by construction; a win rate proves nothing by itself.",
         "how": "For every trade, the average return a random entry with the same hold length and direction would have earned over the whole bar history. Lift is the strategy's mean minus that. Per-contract % of price, so early and late years weigh the same.",
     },
@@ -34,7 +34,7 @@ CARDS = {
         "title": "WFC - Walk Forward Correlation: did in-sample results predict out-of-sample results?",
         "tagline": "Over-fitting - the whole parameter surface, not one lucky parameter set (Tinsley 2026)",
         "catches": "A walk-forward that validates only the single best parameter set per window can pass by chance. If the ranking of all combinations in-sample says nothing about their ranking out-of-sample, the optimisation was fitting noise.",
-        "how": "For every parameter combination MultiWalk optimised, take its in-sample metric (the project's fitness, NP / average drawdown) and its out-of-sample metric in each walk-forward window and correlate the two across the grid (Spearman; Pearson shown). The null shifts the out-of-sample surface across the grid, keeping its smoothness but breaking its alignment with in-sample; p = (shifts at least as correlated + 1) / (shifts + 1). Gate: pooled p < 0.05 AND at least half of the combinations that were positive in-sample are positive out-of-sample - correlation alone is not edge.",
+        "how": "For every parameter combination MultiWalk optimised, take its in-sample metric (the project's fitness function - net profit or NP / average drawdown; the chart axes name it) and its out-of-sample metric in each walk-forward window and correlate the two across the grid (Spearman; Pearson shown). The null shifts the out-of-sample surface across the grid, keeping its smoothness but breaking its alignment with in-sample; p = (shifts at least as correlated + 1) / (shifts + 1). Gate: pooled p < 0.05 AND at least half of the combinations that were positive in-sample are positive out-of-sample - correlation alone is not edge. When the combinations are nearly identical (fewer than 3 effective independent variants, from the selection card), a low correlation cannot tell over-fitting from 'nothing to rank': the card then reads not informative and the gate is not applied. Tabs: Scatter (one dot per combination, with the green best-fit line of Tinsley's chart); Ranked profile (combinations sorted by in-sample result, best on the left - the in-sample rank is the falling blue line, the out-of-sample rank of the same combination an orange dot, hollow when it lost money; if the orange follows the blue down, the ranking held); Bands (grids of 100+ combinations: the mean out-of-sample result per tenth of the in-sample ranking); Null. The top in-sample combinations are outlined in red, and each window's line says where they landed out-of-sample - the correlation still uses every combination.",
     },
     "plateau": {
         "title": "Plateau - does the chosen parameter set sit on a plateau or on a spike?",
@@ -48,13 +48,27 @@ CARDS = {
         "catches": "Picking the best of 240 variants guarantees an impressive in-sample number. The question is whether it is more impressive than the best of 240 variants with no edge at all.",
         "how": "Reality Check (White 2000): resample the in-sample days in blocks (stationary bootstrap, 20-day mean block), recompute every combination's mean daily P&L with the true means removed, and record the best; repeat 500 times. p = share of resamples whose best beats the observed best, and separately MultiWalk's pick. The effective number of independent variants comes from the correlation of the combinations' daily P&L. Reference only.",
     },
+    "timing_entry": {
+        "title": "Entry delay - does the edge live in the first bars after the signal?",
+        "tagline": "Execution sensitivity - the same trades, entered 1, 2, ... bars late, exits as reported",
+        "catches": "An edge that collapses within 1-2 bars of delay lives in the signal bar itself: it is exposed to latency and slippage on entry and, on slow bar sizes, is a warning sign for look-ahead in the signal. An edge that barely moves means the entry is a coarse regime filter, not a timing call.",
+        "how": "Every trade's entry moves k bars later and fills at the open of that bar; the exit keeps its reported bar and price (the exit rule is treated as a time-fixed signal - we cannot re-run the strategy's stops and targets). A trade whose delayed entry reaches its exit bar is skipped at that k and counted. In 'fixed hold' mode the exit moves k bars too, at the open, so the hold length is kept. Gross $, one contract, no costs: costs move the curve's level, not its shape. Trades are independent - no position limit. Left of zero (shaded) the entry moves k bars earlier instead, filled at that bar's open and skipped if it falls before the first bar: hindsight, since no strategy can enter before its signal - read it as how much of the move the entry signal lags, not as a result you could trade.",
+    },
+    "timing_exit": {
+        "title": "Exit delay - is the exit precisely timed?",
+        "tagline": "Exit sensitivity - the same trades, closed 1, 2, ... bars late, entries as reported",
+        "catches": "If a later exit improves the return, the exit rule fires early relative to the move. If it destroys the return, the exit is precisely timed (a stop or a target) and slippage on the exit bar matters more than on the entry bar.",
+        "how": "Every trade keeps its reported entry; its exit moves k bars later and fills at the open of that bar. A trade whose delayed exit falls past the last bar is skipped at that k and counted. A delayed exit may overlap the next trade's entry - trades are treated as independent. Gross $, one contract, no costs. Identical in both modes. Left of zero (shaded) the exit moves k bars earlier instead, filled at that bar's open and skipped once it would reach the entry bar: hindsight - how much the exit signal lags the turn, not a tradable result.",
+    },
 }
 
-CONCEPT = """**What the cards measure.** Every timing card scores *lift*: the strategy's return minus what random entries with the same hold lengths and directions would have earned on the same bars. A long strategy in a rising market is positive by construction; lift removes that drift.
+CONCEPT = """**What the cards measure.** The baseline, T8a, T3 and T7 cards score *lift*: the strategy's return minus what random entries with the same hold lengths and directions would have earned on the same bars. A long strategy in a rising market is positive by construction; lift removes that drift.
 
-**How verdicts work.** Gates decide (PASS / FAIL): T8a random entries (p < 0.05) and T7 costs (net lift after 1x cost > 0). Scores rank (T3: windows with positive lift). Reference cards inform (baseline, drawdown). There is no composite number on purpose: one failed gate is a failed strategy, however good the rest looks.
+**How verdicts work.** Gates decide (PASS / FAIL): T8a random entries (p < 0.05) and T7 costs (net lift after 1x cost > 0). Scores rank (T3: windows with positive lift). Reference cards inform (baseline, drawdown, and the two timing-sensitivity cards). There is no composite number on purpose: one failed gate is a failed strategy, however good the rest looks.
 
 **How capital is set.** Cumulative $ P&L for one contract -> drawdown episodes (peak -> trough -> recovery) -> **CDaR-80** = the mean depth of the worst 20% of episodes -> **capital = 5 × CDaR-80** -> annual return = yearly $ / that capital. In the sidebar you can replace the capital with a fixed starting amount; CDaR-80 and 5 × CDaR-80 are still shown.
+
+**Timing sensitivity** (under the five cards) shifts every entry, or every exit, by 1, 2, ... bars and shows how much of the gross $ survives - and, as hindsight, what acting earlier would have given. It is a picture, not a gate, and is not counted in "Gates passed".
 
 **Optional: MultiWalk surface tests** (bottom of the page) read every parameter combination of a MultiWalk optimisation and ask whether in-sample results predicted out-of-sample results across the whole grid (WFC), whether the chosen parameters sit on a plateau, and how much of the best in-sample result is selection luck."""
 
@@ -75,4 +89,8 @@ HELP = {
 Upload two files: the `..._MultiWalk.txt` from `Optimization Files` and `WalkforwardData.db` from `Walkforward Files`. Nothing else is needed - these tests use no bars and no report.""",
     "mw_files": "The text file holds every parameter combination's daily P&L and trades; the database holds the walk-forward windows and which combination MultiWalk picked for each. Both come from the same project folder and the same run.",
     "n_boot": "Resamples for the selection haircut. 500 gives a p-value floor of 0.002; 200 is enough for a first look.",
+    "mw_windows": "Which in-sample / out-of-sample windows the three cards use. MultiWalk's windows = this project's walk-forward schedule and the combination MultiWalk picked in each. With few trades per window (a daily strategy on 1-year windows has about 15), use 2 windows (the history in three equal parts: first → second, second → third) or 1 split (first half in-sample, second half out-of-sample); the pick is then the best in-sample combination. Choose before you look at the result - picking the split that passes is one more way to fit the data.",
+    "timing": "Same two files as the cards above. How much of the gross $ survives when every entry, or every exit, is acted on 1, 2, ... bars late - and, left of zero, 1, 2, ... bars early (hindsight: no strategy can act before its signal). A picture of fragility, not a gate: no verdict and not counted in 'Gates passed'.",
+    "timing_max_k": "How many bars each leg is shifted, both ways: 1..k bars later (a delay you could suffer live) and 1..k bars earlier (hindsight). A shifted leg fills at the open of the bar it moves to.",
+    "timing_mode": "Fixed exit (default): a delayed entry keeps the reported exit bar and price, so the hold gets shorter and a trade whose delayed entry reaches its exit bar is skipped. Fixed hold: the exit moves the same number of bars, so the hold length is kept and the entry card shifts the whole trade. The exit-delay card and the 'Where timing matters' lines (one leg at a time) are the same in both modes.",
 }

@@ -49,6 +49,18 @@ def test_mini_report_settings_and_summary(mini_report_text):
     assert rep.warnings == []
 
 
+def test_settings_without_a_strategy_settings_header_keep_inputs_out_of_the_strategies(mini_report_text):
+    """Some TradeStation versions list costs and inputs straight after the strategies, with no
+    'TradeStation Strategy Settings' header; only '(On)' / '(Off)' lines are strategies."""
+    lines = mini_report_text.splitlines()
+    i = lines.index("TradeStation Strategy Settings,,,")
+    assert lines[i - 1] == ",,,"
+    lines[i - 1:i + 1] = ["Demo_Filter(Off),,,", "Costs/Capitalization,,,", "Initial Capital,$100000.00,,"]
+    rep = parse_report("\n".join(lines))
+    assert rep.settings["strategies"] == ["Demo_Strategy(On)", "Demo_Filter(Off)"]
+    assert rep.settings["inputs"] == {"Initial Capital": "$100000.00", "Demo_Strategy - Length": "20", "Demo_Strategy - UseStop": "true"}
+
+
 def test_synthetic_roundtrip():
     bars = make_bars(n=800, seed=5)
     trades = make_trades(bars, n=30, seed=6)
@@ -66,7 +78,7 @@ def test_missing_trades_list_header_raises():
 
 def test_scaling_out_is_refused(mini_report_text):
     extra = ",Sell,1/7/2025 13:30,StopExit D,$19999.50,,($22.00),$2.70,,($28.00),30.00%,-10.00%,$2.20,$0.50"
-    lines = mini_report_text.split("\r\n")
+    lines = mini_report_text.splitlines()
     i = next(k for k, l in enumerate(lines) if l.startswith(",Sell,1/7/2025 13:00"))
     lines.insert(i + 1, extra)
     with pytest.raises(ReportFormatError, match="trade 2 has 2 exit rows"):
@@ -80,7 +92,7 @@ def test_exit_type_mismatch_raises(mini_report_text):
 
 
 def test_trailing_open_trade_is_dropped_with_warning(mini_report_text):
-    lines = mini_report_text.split("\r\n")
+    lines = mini_report_text.splitlines()
     i = next(k for k, l in enumerate(lines) if l.startswith(",Sell,1/7/2025 13:00"))
     del lines[i]
     rep = parse_report("\r\n".join(lines))
@@ -91,7 +103,7 @@ def test_trailing_open_trade_is_dropped_with_warning(mini_report_text):
 
 
 def test_interior_open_trade_is_still_an_error(mini_report_text):
-    lines = mini_report_text.split("\r\n")
+    lines = mini_report_text.splitlines()
     i = next(k for k, l in enumerate(lines) if l.startswith(",Buy to Cover,1/6/2025 11:30"))
     del lines[i]
     with pytest.raises(ReportFormatError, match="trade 1 has no exit row"):
@@ -100,7 +112,7 @@ def test_interior_open_trade_is_still_an_error(mini_report_text):
 
 def test_only_trade_open_is_an_error(mini_report_text):
     drop = (",Buy to Cover,1/6/2025 11:30", "2,Buy,1/7/2025 10:00", ",Sell,1/7/2025 13:00")
-    lines = [l for l in mini_report_text.split("\r\n") if not l.startswith(drop)]
+    lines = [l for l in mini_report_text.splitlines() if not l.startswith(drop)]
     with pytest.raises(ReportFormatError, match="still open"):
         parse_report("\r\n".join(lines))
 
