@@ -4,11 +4,13 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 from robustness.cost_stress import CostStressResult
 from robustness.drawdown import DrawdownResult
 from robustness.null_entry import RandomEntryResult
 from robustness.plateau_grid import PlateauWindow
+from robustness.region_wfc import RegionWindow, ridge
 from robustness.selection import SelectionWindow
 from robustness.temporal import TemporalResult
 from robustness.timing import DelayCurve
@@ -172,6 +174,84 @@ def fig_wfc_null(w: WFCWindow) -> go.Figure:
     fig = go.Figure(go.Histogram(x=w.null, nbinsx=30, marker_color=MUTED))
     fig.add_vline(x=w.spearman, line_color=ACCENT, line_width=3, annotation_text=f"observed ρ = {w.spearman:.2f}", annotation_position="top")
     fig.update_layout(**_LAYOUT, xaxis_title="Spearman ρ under the null (OOS surface re-drawn)", yaxis_title=f"count of {w.null.size} draws")
+    return fig
+
+
+def fig_region_null(rw: RegionWindow) -> go.Figure:
+    """Histogram of the region lift under the sign-flip null (out-of-sample surface re-drawn) with the observed L marked."""
+    fig = go.Figure(go.Histogram(x=rw.null_lift, nbinsx=30, marker_color=MUTED))
+    fig.add_vline(x=rw.lift, line_color=ACCENT, line_width=3, annotation_text=f"observed L = {rw.lift:+.2f} SD", annotation_position="top")
+    fig.update_layout(**_LAYOUT, xaxis_title="region lift under the null, SD (out-of-sample surface re-drawn)",
+                      yaxis_title=f"count of {rw.null_lift.size} draws")
+    return fig
+
+
+def _outline(mask: np.ndarray) -> tuple[list, list]:
+    """Unit edges between a masked cell and anything outside the mask, as one polyline with a
+    None break after every edge; cell (row r, column c) spans [c - 0.5, c + 0.5] x [r - 0.5, r + 0.5]."""
+    xs: list = []
+    ys: list = []
+    h, w = mask.shape
+    for r, c in zip(*np.nonzero(mask)):
+        for inside, (x0, y0, x1, y1) in (
+                (c > 0 and mask[r, c - 1], (c - 0.5, r - 0.5, c - 0.5, r + 0.5)),
+                (c < w - 1 and mask[r, c + 1], (c + 0.5, r - 0.5, c + 0.5, r + 0.5)),
+                (r > 0 and mask[r - 1, c], (c - 0.5, r - 0.5, c + 0.5, r - 0.5)),
+                (r < h - 1 and mask[r + 1, c], (c - 0.5, r + 0.5, c + 0.5, r + 0.5))):
+            if not inside:
+                xs += [x0, x1, None]
+                ys += [y0, y1, None]
+    return xs, ys
+
+
+def fig_region_surfaces(rw: RegionWindow, grid_pos: np.ndarray, axes: list[np.ndarray], names: list[str]) -> go.Figure:
+    """One window's net profit surface as 2 x 2 heatmaps - in-sample and out-of-sample (columns),
+    raw and pooled over each cell's neighbourhood (rows) - each with the outline of its ridge
+    (largest connected top-fifth component). The widest parameter runs across, the next widest up;
+    any other parameter is fixed at the best pooled in-sample combination (named in the title); a
+    one-parameter grid is a single row. Colour is centred on zero, one scale per column."""
+    pos = np.asarray(grid_pos)
+    order = np.argsort(-np.array([len(a) for a in axes]), kind="stable")
+    ax_a = int(order[0])
+    ax_b = int(order[1]) if len(order) > 1 else None
+    best = pos[int(rw.region[0])]
+    fixed = [a for a in range(pos.shape[1]) if a not in (ax_a, ax_b)]
+    sel = np.all(pos[:, fixed] == best[fixed], axis=1) if fixed else np.ones(len(pos), dtype=bool)
+    cols = pos[sel, ax_a]
+    rows = pos[sel, ax_b] if ax_b is not None else np.zeros(int(sel.sum()), dtype=int)
+    h, w = (len(axes[ax_b]) if ax_b is not None else 1), len(axes[ax_a])
+    label = np.full((h, w), "", dtype=object)
+    label[rows, cols] = [" / ".join(f"{names[a]}={axes[a][p[a]]:g}" for a in range(pos.shape[1])) for p in pos[sel]]
+    panels = (("in-sample, raw", rw.x, 1, 1), ("out-of-sample, raw", rw.y, 1, 2),
+              ("in-sample, pooled", rw.x_pooled, 2, 1), ("out-of-sample, pooled", rw.y_pooled, 2, 2))
+    fig = make_subplots(rows=2, cols=2, subplot_titles=[p[0] for p in panels], horizontal_spacing=0.16, vertical_spacing=0.24)
+    vmax = {}
+    for name, values, r, c in panels:
+        img = np.full((h, w), np.nan)
+        img[rows, cols] = np.asarray(values, dtype=float)[sel]
+        vmax[c] = max(vmax.get(c, 0.0), float(np.nanmax(np.abs(img))) if np.isfinite(img).any() else 0.0)
+        fig.add_trace(go.Heatmap(z=img, x=list(range(w)), y=list(range(h)), coloraxis="coloraxis" if c == 1 else "coloraxis2",
+                                 customdata=label, name=name, hovertemplate="%{customdata}<br>$%{z:,.0f}<extra></extra>"), row=r, col=c)
+        mask = np.zeros((h, w), dtype=bool)
+        mask[rows, cols] = ridge(values, pos)[sel]
+        xs, ys = _outline(mask)
+        fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line=dict(color="black", width=2), name=f"ridge: {name}",
+                                 hoverinfo="skip"), row=r, col=c)
+    step = max(1, w // 12)
+    fig.update_xaxes(tickvals=list(range(0, w, step)), ticktext=[f"{v:g}" for v in axes[ax_a][::step]], title_text=names[ax_a],
+                     range=[-0.5, w - 0.5])
+    fig.update_yaxes(tickvals=list(range(h)), ticktext=[f"{v:g}" for v in axes[ax_b]] if ax_b is not None else [""],
+                     range=[-0.5, h - 0.5])
+    fig.update_yaxes(title_text=names[ax_b] if ax_b is not None else "", col=1)   # the right column shares it
+    scale = {c: (vmax[c] or 1.0) for c in vmax}
+    slice_txt = ", ".join(f"{names[a]}={axes[a][best[a]]:g}" for a in fixed)
+    fig.update_layout(template="plotly_white", height=620, showlegend=False, margin=dict(l=50, r=20, t=70, b=40),
+                      title=dict(text="net profit $, outline = largest connected top-20% region"
+                                 + (f" · slice {slice_txt}" if slice_txt else ""), font=dict(size=12)),
+                      coloraxis=dict(colorscale="RdYlGn", cmin=-scale[1], cmax=scale[1],
+                                     colorbar=dict(x=0.425, xanchor="left", len=0.9, thickness=12)),
+                      coloraxis2=dict(colorscale="RdYlGn", cmin=-scale[2], cmax=scale[2],
+                                      colorbar=dict(x=1.005, xanchor="left", len=0.9, thickness=12)))
     return fig
 
 
