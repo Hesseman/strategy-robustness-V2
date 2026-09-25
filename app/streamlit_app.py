@@ -18,7 +18,7 @@ from app.loaders import loaded_bars, parsed_report  # noqa: E402
 from robustness import charts  # noqa: E402
 from robustness.bars_loader import BarsFormatError  # noqa: E402
 from robustness.battery import ValidationFailed, run_battery, to_json  # noqa: E402
-from robustness.multiwalk_battery import MultiWalkValidationFailed, mw_to_json, run_multiwalk_battery  # noqa: E402
+from robustness.multiwalk_battery import NEFF_MIN, MultiWalkValidationFailed, mw_to_json, run_multiwalk_battery, wfc_quadrant  # noqa: E402
 from robustness.multiwalk_text import MultiWalkFormatError, parse_multiwalk_text  # noqa: E402
 from robustness.report_parser import ReportFormatError  # noqa: E402
 from robustness.walkforward_db import WalkforwardDBError, parse_walkforward_db  # noqa: E402
@@ -28,14 +28,15 @@ st.set_page_config(page_title="Strategy Robustness V2", layout="wide")
 
 PILL = {"pass": ("#2e8b57", "✓ PASS"), "fail": ("#c0392b", "✗ FAIL"), "score": ("#1f5fbf", "SCORE"),
         "reference": ("#9a9a94", "REFERENCE"), "insufficient": ("#9a9a94", "n < 30 - gate not applied"),
-        "insufficient_wfc": ("#9a9a94", "too few usable points - gate not applied")}
+        "insufficient_wfc": ("#9a9a94", "too few usable points - gate not applied"),
+        "not_informative": ("#9a9a94", "combinations nearly identical - gate not applied")}
 MW_SCHEMES = {"multiwalk": "MultiWalk's windows", "two": "2 windows (thirds)", "single": "1 split (halves)"}
 
 
 def pill(verdict: str, extra: str = "") -> str:
-    """Accepts a verdict key (pass | fail | score | reference | insufficient) and optional
-    extra text; returns the HTML span for the coloured pill. Guarantees the five known
-    keys render; any other key raises KeyError."""
+    """Accepts a verdict key from PILL (pass | fail | score | reference | insufficient |
+    insufficient_wfc | not_informative) and optional extra text; returns the HTML span for the
+    coloured pill. Guarantees every PILL key renders; any other key raises KeyError."""
     color, label = PILL[verdict]
     return (f'<span style="background:{color};color:white;padding:4px 12px;border-radius:14px;'
             f'font-weight:600;font-size:0.9rem">{label}{(" " + extra) if extra else ""}</span>')
@@ -367,7 +368,13 @@ st.subheader(f"{mm['strategy'] or 'MultiWalk project'} · {mm['symbol']} {mm['in
 st.caption(f"{mm['group']} · windows: {MW_SCHEMES[mm['window_scheme']]} · metric: {mm['fitness']} ({mm['metric']}) · "
            f"{mm['n_complete']} of {mm['n_windows']} windows complete · {mm['n_null']} null shifts, {mm['n_boot']} resamples, seed {mm['seed']}")
 pick_label = mm["pick_label"]
-st.markdown(f"**Gates passed: {mw.gates_passed} of {mw.gates_total}.** " + mw.caveat)
+_not_applied = {"insufficient": "no complete window has enough usable combinations",
+                "not_informative": f"the combinations are nearly identical (≈ {mm['n_eff_median']:.1f} effective independent "
+                                   "variants), so a low correlation cannot separate over-fitting from nothing to rank"}
+if mw.verdicts["wfc"] in _not_applied:
+    st.markdown(f"**WFC gate not applied** - {_not_applied[mw.verdicts['wfc']]}. " + mw.caveat)
+else:
+    st.markdown(f"**Gates passed: {mw.gates_passed} of {mw.gates_total}.** " + mw.caveat)
 with st.expander("Validation checks", expanded=not all(c.passed for c in mw.checks)):
     st.table([{"check": c.name, "ok": "✓" if c.passed else ("⚠" if c.severity == "warn" else "✗"), "detail": c.detail} for c in mw.checks])
 rows = []
@@ -375,7 +382,7 @@ for w, pw, sw, wm in zip(mw.wfc.windows, mw.plateau.windows, mw.selection.window
     rows.append({"window": w.label, "complete": "✓" if w.complete else "✗", "points": w.n_points,
                  "IS trades": wm["is_trades_median"], "OOS trades": wm["oos_trades_median"], "Spearman ρ": round(w.spearman, 3),
                  "Pearson r": round(w.pearson, 3), "p": w.p_value if w.null.size else None, "positive OOS share": round(w.pos_oos_frac, 2),
-                 "quadrant": w.quadrant, "plateau (OOS)": None if not math.isfinite(pw.score_oos) else round(pw.score_oos, 2), "pick deflated p": None if not math.isfinite(sw.p_pick) else sw.p_pick,
+                 "quadrant": wfc_quadrant(w, sw.n_eff), "plateau (OOS)": None if not math.isfinite(pw.score_oos) else round(pw.score_oos, 2), "pick deflated p": None if not math.isfinite(sw.p_pick) else sw.p_pick,
                  "pick IS rank %": None if not math.isfinite(w.pick_is_pct) else round(w.pick_is_pct), "pick OOS rank %": None if not math.isfinite(w.pick_oos_pct) else round(w.pick_oos_pct)})
 st.dataframe(rows, width="stretch", hide_index=True)
 usable = [w for w in mw.wfc.windows if w.complete and not w.insufficient]
@@ -386,13 +393,16 @@ wi = chart_labels.index(sel)
 ww, pw, sw = mw.wfc.windows[wi], mw.plateau.windows[wi], mw.selection.windows[wi]
 metric_label = "NP / avg DD" if mm["metric"] == "NPAvgDD" else "net profit $"
 
-wfc_verdict = mw.verdicts["wfc"] if mw.verdicts["wfc"] != "insufficient" else "insufficient_wfc"
+wfc_verdict = {"insufficient": "insufficient_wfc"}.get(mw.verdicts["wfc"], mw.verdicts["wfc"])
 wfc_lines = [(f"pooled over **{len(usable)} complete window(s)**: Spearman ρ = **{mw.wfc.pooled_spearman:.2f}** → {_p3(mw.wfc.pooled_p)} (gate < 0.05); "
               f"positive OOS among positive-IS combinations **{mw.wfc.pooled_pos_oos_frac:.0%}** (gate ≥ 50%)") if usable else "no complete window with enough usable points"]
-for w, wm in zip(mw.wfc.windows, mm["windows"]):
+if math.isfinite(mm["n_eff_median"]):
+    wfc_lines.append(f"effective independent variants ≈ **{mm['n_eff_median']:.1f}** of {mm['n_iter']} (median over complete windows); "
+                     f"below {NEFF_MIN:g} a low correlation says nothing about over-fitting and the gate is not applied")
+for w, wm, sw_ in zip(mw.wfc.windows, mm["windows"], mw.selection.windows):
     trades_txt = f"~{wm['is_trades_median']}/{wm['oos_trades_median']} trades per combination in/out"
     wfc_lines.append(f"{w.label}: ρ = {w.spearman:.2f} (Pearson {w.pearson:.2f}), {_p3(w.p_value) if w.null.size else 'too few points'}, "
-                     f"{w.n_points} points, {trades_txt} → *{w.quadrant}*; {pick_label}: IS rank {_rank(w.pick_is_pct, w.n_points)}, "
+                     f"{w.n_points} points, {trades_txt} → *{wfc_quadrant(w, sw_.n_eff)}*; {pick_label}: IS rank {_rank(w.pick_is_pct, w.n_points)}, "
                      f"OOS rank {_rank(w.pick_oos_pct, w.n_points)}"
                      if math.isfinite(w.pick_is_pct) else f"{w.label}: ρ = {w.spearman:.2f}, {w.n_points} points, {trades_txt}")
 if mw.wfc_np is not None and usable:

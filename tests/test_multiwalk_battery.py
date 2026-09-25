@@ -1,9 +1,10 @@
 import json
+from dataclasses import replace
 
 import numpy as np
 import pytest
 
-from robustness.multiwalk_battery import CAVEAT_MW, MultiWalkValidationFailed, mw_to_json, run_multiwalk_battery
+from robustness.multiwalk_battery import CAVEAT_MW, NEFF_MIN, MultiWalkValidationFailed, mw_to_json, run_multiwalk_battery, wfc_quadrant
 from robustness.multiwalk_text import parse_multiwalk_text
 from robustness.synthetic_multiwalk import make_multiwalk, make_walkforward_db
 from robustness.walkforward_db import parse_walkforward_db
@@ -105,3 +106,36 @@ def test_custom_window_schemes_pick_the_best_in_sample_variant():
             assert mwin["is_trades_median"] > 0 and mwin["oos_trades_median"] > 0
     with pytest.raises(ValueError):
         run_multiwalk_battery(grid, groups, n_null=10, n_boot=10, window_scheme="weekly")
+
+def _near_identical(grid, seed=0, scale=0.02):
+    """Every combination = one common daily series plus tiny noise: N_eff ~ 1, nothing to rank."""
+    rng = np.random.default_rng(seed)
+    common = rng.normal(5.0, 100.0, size=grid.daily_pnl.shape[1])
+    grid.daily_pnl = common[None, :] + rng.normal(0.0, 100.0 * scale, size=grid.daily_pnl.shape)
+    return grid
+
+
+def test_a_fail_on_nearly_identical_variants_reads_not_informative():
+    grid, groups, _ = _inputs("noise")
+    r = run_multiwalk_battery(_near_identical(grid), groups, n_null=199, n_boot=50, seed=0)
+    assert r.meta["n_eff_median"] < NEFF_MIN == 3.0
+    assert not r.wfc.passed and r.verdicts["wfc"] == "not_informative" and r.gates_passed == 0
+
+
+def test_distinct_variants_keep_their_verdicts():
+    grid, groups, _ = _inputs("persistent")
+    r = run_multiwalk_battery(grid, groups, n_null=199, n_boot=50, seed=0)
+    assert r.meta["n_eff_median"] >= NEFF_MIN and r.verdicts["wfc"] == "pass"
+    grid, groups, _ = _inputs("noise")
+    r = run_multiwalk_battery(grid, groups, n_null=199, n_boot=50, seed=0)
+    assert r.meta["n_eff_median"] >= NEFF_MIN and r.verdicts["wfc"] == "fail"
+
+
+def test_wfc_quadrant_relabels_only_low_correlation_windows_with_few_effective_variants():
+    grid, groups, _ = _inputs("persistent", n_days=400)
+    w = run_multiwalk_battery(grid, groups, n_null=20, n_boot=10).wfc.windows[0]
+    for q in ("spurious result, high over-fitting", "noise, no edge"):
+        assert wfc_quadrant(replace(w, quadrant=q), 1.5) == "not informative - variants nearly identical"
+        assert wfc_quadrant(replace(w, quadrant=q), 5.0) == q and wfc_quadrant(replace(w, quadrant=q), float("nan")) == q
+    for q in ("structural edge, low over-fitting", "consistently loss-making strategy"):
+        assert wfc_quadrant(replace(w, quadrant=q), 1.5) == q

@@ -15,7 +15,7 @@ from robustness.plateau_grid import PlateauResult, plateau_test
 from robustness.selection import SelectionResult, selection_test
 from robustness.surface import metric_values, window_metrics
 from robustness.walkforward_db import WFGroup
-from robustness.wfc_grid import WFCResult, wfc_test
+from robustness.wfc_grid import WFCResult, WFCWindow, wfc_test
 from robustness.windows import SCHEMES, Window, custom_windows, derive_windows
 
 CAVEAT_MW = ("These three tests read every parameter combination this MultiWalk optimisation tried, so unlike "
@@ -69,6 +69,22 @@ def validate(grid: MultiWalkGrid, group: WFGroup) -> list[Check]:
     return checks
 
 
+# Below this many effective independent variants (the selection card's participation ratio) the
+# combinations are nearly one strategy: a failed WFC cannot tell over-fitting from 'nothing to rank'.
+NEFF_MIN = 3.0
+NOT_INFORMATIVE = "not informative - variants nearly identical"
+_LOW_CORR_QUADRANTS = ("spurious result, high over-fitting", "noise, no edge")
+
+
+def wfc_quadrant(w: WFCWindow, n_eff: float) -> str:
+    """Accepts a WFCWindow and that window's effective number of independent variants; returns
+    its Diagnostic-Matrix label, except that a low-correlation label reads NOT_INFORMATIVE when
+    n_eff < NEFF_MIN. Guarantees high-correlation labels and a NaN n_eff are never relabelled."""
+    if w.quadrant in _LOW_CORR_QUADRANTS and np.isfinite(n_eff) and n_eff < NEFF_MIN:
+        return NOT_INFORMATIVE
+    return w.quadrant
+
+
 def run_multiwalk_battery(grid: MultiWalkGrid, groups: list[WFGroup], *, group_no: int | None = None, n_null: int = 999,
                           n_boot: int = 500, seed: int = 0, min_trades: int = 10, alpha: float = 0.05,
                           window_scheme: str = "multiwalk") -> MultiWalkResult:
@@ -82,8 +98,9 @@ def run_multiwalk_battery(grid: MultiWalkGrid, groups: list[WFGroup], *, group_n
     Returns: MultiWalkResult with meta (incl. window_scheme, pick_label and per window the median
     closed trades per variant in and out of sample), checks, windows, the WFC result on the
     project's fitness (and on Net Profit when the fitness is NP/AvgDD), plateau, selection,
-    verdicts {'wfc': pass|fail|insufficient, 'plateau': 'score', 'selection': 'reference'},
-    gates 0/1 of 1.
+    verdicts {'wfc': pass|fail|insufficient|not_informative, 'plateau': 'score', 'selection':
+    'reference'} - a fail whose median N_eff over the complete, sufficient windows is below
+    NEFF_MIN reads not_informative (meta n_eff_median) - gates 0/1 of 1.
     Guarantees: raises ValueError for an unknown window_scheme and MultiWalkValidationFailed when
     an error-severity check fails; nothing downstream runs then; deterministic for a given seed."""
     if window_scheme not in SCHEMES:
@@ -120,14 +137,19 @@ def run_multiwalk_battery(grid: MultiWalkGrid, groups: list[WFGroup], *, group_n
     wfc_np = wfc_test(pairs_np, windows, grid, metric="NP", alpha=alpha, n_null=n_null, seed=seed) if metric != "NP" else None
     plateau = plateau_test(pairs, windows, grid)
     selection = selection_test(grid, windows, n_boot=n_boot, seed=seed)
-    verdicts = {"wfc": "pass" if wfc.passed else ("insufficient" if "wfc_insufficient" in wfc.reasons else "fail"),
-                "plateau": "score", "selection": "reference"}
+    usable = [i for i, r in enumerate(wfc.windows) if r.complete and not r.insufficient]
+    neffs = [selection.windows[i].n_eff for i in usable if np.isfinite(selection.windows[i].n_eff)]
+    n_eff_median = float(np.median(neffs)) if neffs else float("nan")
+    wfc_verdict = "pass" if wfc.passed else ("insufficient" if "wfc_insufficient" in wfc.reasons else "fail")
+    if wfc_verdict == "fail" and np.isfinite(n_eff_median) and n_eff_median < NEFF_MIN:
+        wfc_verdict = "not_informative"
+    verdicts = {"wfc": wfc_verdict, "plateau": "score", "selection": "reference"}
     meta = {"strategy": group.strategy, "symbol": group.symbol, "interval": group.interval, "group": group.label,
             "fitness": group.fitness_name, "fitness_abbr": group.fitness_abbr, "metric": metric,
             "param_names": grid.param_names, "shape": list(grid.shape), "n_iter": grid.n_iter,
             "dates_start": grid.dates[0], "dates_end": grid.dates[-1], "n_days": grid.n_days,
             "n_windows": len(windows), "n_complete": sum(w.complete for w in windows),
-            "window_scheme": window_scheme, "pick_label": "MultiWalk's pick" if window_scheme == "multiwalk" else "best in-sample",
+            "n_eff_median": n_eff_median, "window_scheme": window_scheme, "pick_label": "MultiWalk's pick" if window_scheme == "multiwalk" else "best in-sample",
             "windows": [{"index": w.index, "label": w.label, "is_start": w.is_start, "is_end": w.is_end, "oos_start": w.oos_start,
                          "oos_end": w.oos_end, "complete": w.complete, "grid_row": w.grid_row, "params": list(w.params),
                          "is_trades_median": tr[0], "oos_trades_median": tr[1]} for w, tr in zip(windows, trades)],

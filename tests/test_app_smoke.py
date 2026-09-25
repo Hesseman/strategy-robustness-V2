@@ -117,6 +117,24 @@ def test_multiwalk_window_choice_rerenders_with_trade_counts(tmp_path, monkeypat
         assert label in joined and "trades per combination in/out" in joined and "best in-sample" in joined
 
 
+def test_multiwalk_not_informative_verdict_renders(tmp_path, monkeypatch):
+    from robustness import multiwalk_battery
+    from robustness.synthetic_multiwalk import make_multiwalk, make_walkforward_db
+    monkeypatch.setattr(multiwalk_battery, "NEFF_MIN", 1e9)   # every WFC fail now reads not informative
+    text, sched = make_multiwalk({"A": list(range(5)), "B": list(range(4))}, n_days=600, seed=8, structure="noise", split=400)
+    d = tmp_path / "mw_noise"; (d / "Optimization Files").mkdir(parents=True); (d / "Walkforward Files").mkdir()
+    (d / "Optimization Files" / "Noise_MW [@SYN-30min]_MultiWalk.txt").write_text(text, encoding="utf-8")
+    (d / "Walkforward Files" / "WalkforwardData.db").write_bytes(make_walkforward_db(sched))
+    monkeypatch.setenv("SR_SAMPLE_MW_DIR", str(d))
+    at = AppTest.from_file(APP, default_timeout=240)
+    at.session_state["mw_sample"] = True
+    at.run()
+    assert not at.exception, [str(e) for e in at.exception]
+    joined = "\n".join(el.value for el in at.markdown)
+    assert "WFC gate not applied" in joined and "combinations nearly identical - gate not applied" in joined
+    assert "Gates passed: 0 of 1" not in joined
+
+
 def test_capital_radio_switches_the_drawdown_line(tmp_path, monkeypatch):
     report, bars_file = _write_sample(tmp_path)
     monkeypatch.setenv("SR_SAMPLE_REPORT", str(report)); monkeypatch.setenv("SR_SAMPLE_BARS", str(bars_file))
