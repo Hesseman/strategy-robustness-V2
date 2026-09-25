@@ -112,7 +112,7 @@ def result_lines(c: DelayCurve, n_trades: int) -> list[str]:
                      f"({_usd(p1.total_usd)} of {_usd(p0.total_usd)}; {p1.n_alive} trades alive)")
     else:
         lines.append(f"delaying {leg} 1 bar changes the gross $ by **{_dusd(p1.total_usd - p0.total_usd)}** "
-                     f"({_usd(p0.total_usd)} â†’ {_usd(p1.total_usd)}; no ratio - the as-reported total is not positive)")
+                     f"({_usd(p0.total_usd)} → {_usd(p1.total_usd)}; no ratio - the as-reported total is not positive)")
     alive_ks = [p.k for p in c.points if p.n_alive > 0]
     if p0.total_usd <= 0:
         lines.append("not profitable as reported, so there is no profit for a delay to lose")
@@ -153,14 +153,14 @@ def _section_body(report_bytes: bytes, bars_bytes: bytes, max_k: int, mode: str)
     single = result if mode == "fixed_exit" else _timing(report_bytes, bars_bytes, max_k, "fixed_exit")
     m = result.meta
     pv_label = f"1 contract at {m['point_value']:g} USD/pt, gross"
-    st.caption(_esc(f"{m['n_trades']} trades Â· {pv_label}"))
+    st.caption(_esc(f"{m['n_trades']} trades · {pv_label}"))
     st.markdown(_esc(result.caveat))
     share = result.at_open_share
-    st.markdown(_esc(f"**{share:.0%} of entries were filled at the bar open**, so the entry card's 0 â†’ 1 step is "
+    st.markdown(_esc(f"**{share:.0%} of entries were filled at the bar open**, so the entry card's 0 → 1 step is "
                      + ("a pure timing effect." if share >= 0.95 else
-                        "partly a fill-price effect (report price â†’ next bar's open), not only timing.")
+                        "partly a fill-price effect (report price → next bar's open), not only timing.")
                      + " Exit fills are not checked: if exits were stop or limit fills inside the bar, the exit card's "
-                       "0 â†’ 1 step also carries a fill-price effect."))
+                       "0 → 1 step also carries a fill-price effect."))
     wl = where_lines(single)
     if wl:
         st.markdown(_esc("**Where timing matters** - one leg moved, the other as reported (whichever mode is selected); "
