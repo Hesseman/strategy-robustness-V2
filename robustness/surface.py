@@ -33,6 +33,33 @@ def daily_drawdown_stats(pnl: np.ndarray) -> tuple[float, float, float]:
     return float(eq[-1]), float(dd.min()), float(dd.mean())
 
 
+def _equity_stats(sub: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(net_profit, max_dd, avg_dd) per row of a (n, days) daily $ P&L matrix, each row an
+    equity curve from a flat 0 start; the vectorised form of daily_drawdown_stats."""
+    n = sub.shape[0]
+    eq = np.cumsum(sub, axis=1)
+    peak = np.maximum.accumulate(np.concatenate([np.zeros((n, 1)), eq], axis=1), axis=1)[:, 1:]
+    dd = eq - peak
+    return eq[:, -1], dd.min(axis=1), dd.mean(axis=1)
+
+
+def metric_from_daily(daily: np.ndarray, metric: str) -> np.ndarray:
+    """The window metric of every row of a (n, days) daily $ P&L matrix: 'NP' = net profit,
+    'NPAvgDD' = net / -avg DD (NaN where the row was never in drawdown); any other name raises
+    ValueError. Guarantees the same arithmetic as window_metrics + metric_values, and zeros
+    (NP) or NaN (NPAvgDD) when there are no days."""
+    if metric not in ("NPAvgDD", "NP"):
+        raise ValueError(f"unsupported metric {metric!r} (NPAvgDD or NP)")
+    daily = np.asarray(daily, dtype=float)
+    if daily.shape[1] == 0:
+        return np.zeros(daily.shape[0]) if metric == "NP" else np.full(daily.shape[0], np.nan)
+    net, _, avg_dd = _equity_stats(daily)
+    if metric == "NP":
+        return net
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(avg_dd < 0, net / -avg_dd, np.nan)
+
+
 def window_metrics(grid: MultiWalkGrid, mask: np.ndarray) -> SurfaceMetrics:
     """Vectorised daily_drawdown_stats for every iteration over the days where mask is True,
     plus the number of closed trades whose exit date falls inside the masked date range.
@@ -45,11 +72,7 @@ def window_metrics(grid: MultiWalkGrid, mask: np.ndarray) -> SurfaceMetrics:
     if n_days == 0:
         z = np.zeros(n)
         return SurfaceMetrics(z, z.copy(), z.copy(), np.full(n, np.nan), np.zeros(n, dtype=int), 0)
-    sub = grid.daily_pnl[:, mask]
-    eq = np.cumsum(sub, axis=1)
-    peak = np.maximum.accumulate(np.concatenate([np.zeros((n, 1)), eq], axis=1), axis=1)[:, 1:]
-    dd = eq - peak
-    net, max_dd, avg_dd = eq[:, -1], dd.min(axis=1), dd.mean(axis=1)
+    net, max_dd, avg_dd = _equity_stats(grid.daily_pnl[:, mask])
     with np.errstate(divide="ignore", invalid="ignore"):
         ratio = np.where(avg_dd < 0, net / -avg_dd, np.nan)
     lo = np.datetime64(grid.dates[mask][0].date()); hi = np.datetime64(grid.dates[mask][-1].date())

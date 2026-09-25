@@ -35,6 +35,17 @@ def test_noise_fails_wfc_gate():
     assert r.verdicts["wfc"] == "fail" and r.gates_passed == 0
 
 
+def test_battery_records_the_null_and_keeps_torus_behind_the_flag():
+    grid, groups, _ = _inputs("persistent")
+    r = run_multiwalk_battery(grid, groups, n_null=99, n_boot=20, seed=0)
+    assert r.meta["null"] == "signflip" and r.meta["block"] == 21
+    assert r.wfc.null == "signflip" and r.wfc_np.null == "signflip" and r.wfc.windows[0].null.size == 99
+    t = run_multiwalk_battery(grid, groups, n_null=99, n_boot=20, seed=0, null="torus")
+    assert t.meta["null"] == "torus" and t.wfc.null == "torus" and t.wfc.windows[0].null.size == 35
+    with pytest.raises(ValueError):
+        run_multiwalk_battery(grid, groups, n_null=9, n_boot=9, seed=0, null="bootstrap")
+
+
 def test_validation_fails_on_mismatched_names_and_counts():
     grid, groups, _ = _inputs("persistent", n_days=400)
     groups[0].param_names = ["A", "C"]

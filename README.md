@@ -95,7 +95,10 @@ What the three cards mean:
 - **WFC (Walk Forward Correlation)** — gate: whether in-sample results predicted
   out-of-sample results across the whole parameter grid, not just for the one combination
   MultiWalk picked; pooled p < 0.05 and at least half of the in-sample-positive combinations
-  stayed positive out-of-sample. When the combinations are nearly identical (fewer than 3
+  stayed positive out-of-sample. The null re-draws the out-of-sample surface by flipping the
+  sign of each three-week block's deviations from the grid's daily average, so how alike
+  neighbouring combinations are is kept (a grid shift, the earlier null, is not: it passed
+  10-30% of no-structure grids). When the combinations are nearly identical (fewer than 3
   effective independent variants) a low correlation cannot tell over-fitting from "nothing to
   rank", so the card reads **not informative** and the gate is not applied. Tabs: a scatter
   with a green best-fit line (Tinsley's chart),
