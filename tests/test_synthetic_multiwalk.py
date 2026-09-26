@@ -53,3 +53,27 @@ def test_db_is_sqlite_with_the_tables_the_reader_needs():
         con.close()
     finally:
         os.unlink(tmp.name)
+
+
+def test_planted_grid_default_stream_is_pinned():
+    """The default Gaussian stream feeds every size and power oracle of the WFC card; captured before
+    the tail option existed, so adding one cannot move it."""
+    from robustness.synthetic_multiwalk import make_planted_grid
+    g = make_planted_grid((3, 3), structure="noise", rho=0.6, trade_p=0.5, n_days=40, seed=4)
+    assert g.daily_pnl[0, :8].tolist() == [0.0, -0.0, -0.0, 35.46, 0.0, 89.35, 0.0, -103.81]
+    assert g.daily_pnl[8, -6:].tolist() == [34.23, 0.0, -22.32, 0.0, 62.78, -101.75]
+
+
+def test_jumps_tail_is_rare_large_winners_centred_on_zero():
+    """tail='jumps' (rare large trades): each trade's noise is a large winner with probability 0.03 and a
+    small loser otherwise, standardised to mean 0 and SD 1. With rho = 0 (no shared field) a 'noise'
+    grid's trades take exactly two values, 100 x 0.97 / sqrt(0.03 x 0.97) = +568.62 and
+    100 x -0.03 / sqrt(0.03 x 0.97) = -17.59, the winners about 3% of the trades."""
+    import pytest
+    from robustness.synthetic_multiwalk import make_planted_grid
+    g = make_planted_grid((6, 6), structure="noise", rho=0.0, trade_p=0.5, n_days=600, tail="jumps", seed=0)
+    trades = g.daily_pnl[:, g.daily_pnl.any(axis=0)]
+    assert set(np.unique(trades).tolist()) == {568.62, -17.59}
+    assert 0.02 <= (trades > 0).mean() <= 0.04
+    with pytest.raises(ValueError):
+        make_planted_grid((3, 3), tail="cauchy")

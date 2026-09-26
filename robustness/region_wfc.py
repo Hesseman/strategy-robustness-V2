@@ -5,10 +5,12 @@ in-sample top region beat the grid average out of sample? Per window, on net pro
 in-sample surface (each cell = the equal-weight mean of itself and its Chebyshev-1 neighbours, no
 wrap) picks the region R = its top Q_TOP of cells; the lift L = (mean OOS net profit over R - the
 grid mean) / the cross-cell SD of OOS net profit, scored on the raw OOS surface against the block
-sign-flip null (null_signflip.SignFlipNull). For display: the overlap precision of R with the pooled
-OOS top Q_TOP, the largest connected top-Q_TOP component in vs out of sample (Jaccard, centroid
-shift), and where four pick rules landed out of sample. Deliberately absent: a correlation of the
-pooled surfaces (weaker than the pointwise one on correlated noise). No per-cell min-trade hole:
+sign-flip null (null_signflip.SignFlipNull, the gate) and, as its cross-check, a centred block
+bootstrap of the same blocks (null_signflip.BlockBootstrapNull, reported only). For display: the
+overlap precision of R with the pooled OOS top Q_TOP, the largest connected top-Q_TOP component in
+vs out of sample (Jaccard, centroid shift), and where four pick rules landed out of sample.
+Deliberately absent: a correlation of the pooled surfaces (weaker than the pointwise one on
+correlated noise). No per-cell min-trade hole:
 the null prices each cell's noise. The verdict built on these statistics (matrix, structure gate,
 printed guards) lives in multiwalk_battery. Only reason to change: the region method's definition."""
 from __future__ import annotations
@@ -19,7 +21,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from robustness.multiwalk_text import MultiWalkGrid
-from robustness.null_signflip import SignFlipNull
+from robustness.null_signflip import BlockBootstrapNull, SignFlipNull
 from robustness.plateau_grid import neighbours
 from robustness.surface import window_metrics
 from robustness.windows import Window
@@ -154,6 +156,8 @@ class RegionWindow:
     oos_positive_share: float    # share of combinations with y > 0
     null_lift: np.ndarray
     p_lift: float
+    null_lift_boot: np.ndarray   # the lift's draws under the centred block bootstrap (the cross-check)
+    p_lift_boot: float
     n_distinct_oos: int          # distinct out-of-sample daily patterns
     precision: float             # share of R in the top k of y_pooled; NaN when n_distinct_oos < 2k
     null_precision: np.ndarray
@@ -178,6 +182,7 @@ class RegionResult:
     n_null: int
     lift: float                  # pooled over the complete windows: mean L
     p_lift: float
+    p_lift_boot: float           # the same lift against the centred block bootstrap (the cross-check)
     region_oos_mean: float
     grid_oos_mean: float
     oos_positive_share: float
@@ -191,8 +196,8 @@ class RegionResult:
     pct_pick: float
 
 
-def _region_window(grid: MultiWalkGrid, w: Window, nbhd: list[np.ndarray], null: SignFlipNull, n_null: int,
-                   seed: int) -> RegionWindow:
+def _region_window(grid: MultiWalkGrid, w: Window, nbhd: list[np.ndarray], null: SignFlipNull,
+                   boot: BlockBootstrapNull, n_null: int, seed: int) -> RegionWindow:
     n = grid.n_iter
     k = region_size(n)
     x = window_metrics(grid, w.is_mask).net_profit.astype(float)
@@ -212,6 +217,8 @@ def _region_window(grid: MultiWalkGrid, w: Window, nbhd: list[np.ndarray], null:
 
     draws = null.draws(y, w, np.random.default_rng(seed + 1000 * w.index), n_null)
     lift, null_lift = float(lift_of(y)), np.asarray(lift_of(draws), dtype=float).reshape(-1)
+    boot_draws = boot.draws(y, w, np.random.default_rng([seed + 1000 * w.index, 1]), n_null)   # its own stream
+    null_lift_boot = np.asarray(lift_of(boot_draws), dtype=float).reshape(-1)
     n_distinct = distinct_patterns(grid.daily_pnl[:, w.oos_mask])
     scored = n_distinct >= 2 * k
     precision = precision_of(yp) if scored else float("nan")
@@ -223,6 +230,7 @@ def _region_window(grid: MultiWalkGrid, w: Window, nbhd: list[np.ndarray], null:
         index=w.index, label=w.label, complete=w.complete, k=k, x=x, y=y, x_pooled=xp, y_pooled=yp, region=region,
         lift=lift, region_oos_mean=float(y[region].mean()), grid_oos_mean=float(y.mean()), oos_sd=sd,
         oos_positive_share=float((y > 0).mean()), null_lift=null_lift, p_lift=_p(null_lift, lift),
+        null_lift_boot=null_lift_boot, p_lift_boot=_p(null_lift_boot, lift),
         n_distinct_oos=n_distinct, precision=precision, null_precision=null_precision,
         p_precision=_p(null_precision, precision), ridge_is=ridge_is, ridge_oos=ridge_oos,
         ridge_jaccard=float((ridge_is & ridge_oos).sum() / union) if union and scored else float("nan"),
@@ -242,15 +250,18 @@ def region_test(grid: MultiWalkGrid, windows: list[Window], *, n_null: int = 999
     Returns: RegionResult with one RegionWindow per window, in order. A window's null is
     SignFlipNull(grid, 'NP', block).draws of the raw OOS net profit, seeded seed + 1000 x window
     index; a draw's lift is scaled by the observed SD (a fixed unit per window, as in the research
-    prototype) and its precision is taken on the pooled draw. Pooled over the complete windows:
+    prototype) and its precision is taken on the pooled draw. The cross-check,
+    BlockBootstrapNull(grid, 'NP', block), draws n_null from its own generator (seeded
+    (seed + 1000 x window index, 1), so the flip's draws do not move) and is scored and pooled
+    like the lift (p_lift_boot); it is reported, never gated. Pooled over the complete windows:
     the mean of each statistic and, for L and precision, the per-window draws averaged draw by
     draw (the windows' draws are independent); p = (k + 1) / (n + 1). Precision pools only the
     windows where it is scored; display values are means of the finite ones.
     Guarantees: deterministic for a seed; pooled values NaN when no window is complete; nothing
     depends on a per-cell trade count."""
     nbhd = neighbourhoods(grid.grid_pos)
-    null = SignFlipNull(grid, "NP", block)
-    rws = [_region_window(grid, w, nbhd, null, int(n_null), seed) for w in windows]
+    null, boot = SignFlipNull(grid, "NP", block), BlockBootstrapNull(grid, "NP", block)
+    rws = [_region_window(grid, w, nbhd, null, boot, int(n_null), seed) for w in windows]
     use = [r for r in rws if r.complete]
 
     def pooled(stat: str, null_name: str) -> tuple[float, float]:
@@ -261,10 +272,11 @@ def region_test(grid: MultiWalkGrid, windows: list[Window], *, n_null: int = 999
         return obs, _p(np.mean(np.stack([getattr(r, null_name) for r in ok]), axis=0), obs)
 
     lift, p_lift = pooled("lift", "null_lift")
+    _, p_lift_boot = pooled("lift", "null_lift_boot")
     precision, p_precision = pooled("precision", "null_precision")
     return RegionResult(
         windows=rws, n_complete=len(use), k=region_size(grid.n_iter), q=Q_TOP, block=int(block), n_null=int(n_null),
-        lift=lift, p_lift=p_lift, region_oos_mean=_mean([r.region_oos_mean for r in use]),
+        lift=lift, p_lift=p_lift, p_lift_boot=p_lift_boot, region_oos_mean=_mean([r.region_oos_mean for r in use]),
         grid_oos_mean=_mean([r.grid_oos_mean for r in use]),
         oos_positive_share=_mean([r.oos_positive_share for r in use]), precision=precision, p_precision=p_precision,
         ridge_jaccard=_mean([r.ridge_jaccard for r in use]), ridge_shift=_mean([r.ridge_shift for r in use]),

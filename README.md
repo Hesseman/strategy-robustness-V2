@@ -106,7 +106,11 @@ What the three cards mean:
   money → **plateau**: the parameter choice is immaterial and the five cards above govern (gate
   not applied). A grid whose combinations repeat out-of-sample (fewer distinct results than
   twice the region: identical variants) is not scored and reads plateau too. Every PASS is
-  printed with the facts to read it with: the effective number of independent variants (below
+  printed with the facts to read it with: the lift's p under a second null, a centred block
+  bootstrap that resamples the same three-week blocks instead of flipping them (the flip
+  assumes a block's deviations are as likely as their negation, which a few large divergent
+  trades can break), flagged when one p is below 0.05 and the other is not (the flip stays
+  the gate); the effective number of independent variants (below
   3 the variants are nearly one strategy and the lift rests on the few trades where they
   differ; shown as context, not a gate, because the null already holds however alike they
   are), the region's and the grid's out-of-sample dollars, and the region's margin over the
