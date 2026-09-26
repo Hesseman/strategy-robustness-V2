@@ -1,6 +1,8 @@
 """Plotly figures for the cards and the timing-sensitivity section. No Streamlit here."""
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -10,6 +12,7 @@ from robustness.cost_stress import CostStressResult
 from robustness.drawdown import DrawdownResult
 from robustness.null_entry import RandomEntryResult
 from robustness.plateau_grid import PlateauWindow
+from robustness.base_setting import BaseSetting
 from robustness.region_wfc import RegionWindow, ridge
 from robustness.selection import SelectionWindow
 from robustness.temporal import TemporalResult
@@ -204,6 +207,46 @@ def _outline(mask: np.ndarray) -> tuple[list, list]:
     return xs, ys
 
 
+@dataclass
+class _Slice:
+    ax_a: int                     # parameter drawn across (the widest)
+    ax_b: int | None              # parameter drawn up (the next widest); None on a one-parameter grid
+    sel: np.ndarray               # combinations in the slice
+    rows: np.ndarray              # their row (position on ax_b)
+    cols: np.ndarray              # their column (position on ax_a)
+    h: int
+    w: int
+    label: np.ndarray             # (h, w) hover text: every parameter's value
+    slice_txt: str                # the fixed parameters, 'Name=value, ...' ('' on two or fewer parameters)
+
+
+def _slice(pos: np.ndarray, axes: list[np.ndarray], names: list[str], through: int) -> _Slice:
+    """The 2-D slice a grid heatmap draws: the widest parameter across, the next widest up, every
+    other parameter fixed at combination `through`'s value."""
+    order = np.argsort(-np.array([len(a) for a in axes]), kind="stable")
+    ax_a = int(order[0])
+    ax_b = int(order[1]) if len(order) > 1 else None
+    at = pos[through]
+    fixed = [a for a in range(pos.shape[1]) if a not in (ax_a, ax_b)]
+    sel = np.all(pos[:, fixed] == at[fixed], axis=1) if fixed else np.ones(len(pos), dtype=bool)
+    cols = pos[sel, ax_a]
+    rows = pos[sel, ax_b] if ax_b is not None else np.zeros(int(sel.sum()), dtype=int)
+    h, w = (len(axes[ax_b]) if ax_b is not None else 1), len(axes[ax_a])
+    label = np.full((h, w), "", dtype=object)
+    label[rows, cols] = [" / ".join(f"{names[a]}={axes[a][p[a]]:g}" for a in range(pos.shape[1])) for p in pos[sel]]
+    return _Slice(ax_a=ax_a, ax_b=ax_b, sel=sel, rows=rows, cols=cols, h=h, w=w, label=label,
+                  slice_txt=", ".join(f"{names[a]}={axes[a][at[a]]:g}" for a in fixed))
+
+
+def _grid_axes(fig: go.Figure, sl: _Slice, axes: list[np.ndarray], names: list[str]) -> None:
+    """Tick labels (every step-th value, at most ~12 across) and the across title for a grid heatmap."""
+    step = max(1, sl.w // 12)
+    fig.update_xaxes(tickvals=list(range(0, sl.w, step)), ticktext=[f"{v:g}" for v in axes[sl.ax_a][::step]],
+                     title_text=names[sl.ax_a], range=[-0.5, sl.w - 0.5])
+    fig.update_yaxes(tickvals=list(range(sl.h)), ticktext=[f"{v:g}" for v in axes[sl.ax_b]] if sl.ax_b is not None else [""],
+                     range=[-0.5, sl.h - 0.5])
+
+
 def fig_region_surfaces(rw: RegionWindow, grid_pos: np.ndarray, axes: list[np.ndarray], names: list[str]) -> go.Figure:
     """One window's net profit surface as 2 x 2 heatmaps - in-sample and out-of-sample (columns),
     raw and pooled over each cell's neighbourhood (rows) - each with the outline of its ridge
@@ -211,17 +254,8 @@ def fig_region_surfaces(rw: RegionWindow, grid_pos: np.ndarray, axes: list[np.nd
     any other parameter is fixed at the best pooled in-sample combination (named in the title); a
     one-parameter grid is a single row. Colour is centred on zero, one scale per column."""
     pos = np.asarray(grid_pos)
-    order = np.argsort(-np.array([len(a) for a in axes]), kind="stable")
-    ax_a = int(order[0])
-    ax_b = int(order[1]) if len(order) > 1 else None
-    best = pos[int(rw.region[0])]
-    fixed = [a for a in range(pos.shape[1]) if a not in (ax_a, ax_b)]
-    sel = np.all(pos[:, fixed] == best[fixed], axis=1) if fixed else np.ones(len(pos), dtype=bool)
-    cols = pos[sel, ax_a]
-    rows = pos[sel, ax_b] if ax_b is not None else np.zeros(int(sel.sum()), dtype=int)
-    h, w = (len(axes[ax_b]) if ax_b is not None else 1), len(axes[ax_a])
-    label = np.full((h, w), "", dtype=object)
-    label[rows, cols] = [" / ".join(f"{names[a]}={axes[a][p[a]]:g}" for a in range(pos.shape[1])) for p in pos[sel]]
+    sl = _slice(pos, axes, names, int(rw.region[0]))
+    ax_b, sel, rows, cols, h, w, label = sl.ax_b, sl.sel, sl.rows, sl.cols, sl.h, sl.w, sl.label
     panels = (("in-sample, raw", rw.x, 1, 1), ("out-of-sample, raw", rw.y, 1, 2),
               ("in-sample, pooled", rw.x_pooled, 2, 1), ("out-of-sample, pooled", rw.y_pooled, 2, 2))
     fig = make_subplots(rows=2, cols=2, subplot_titles=[p[0] for p in panels], horizontal_spacing=0.16, vertical_spacing=0.24)
@@ -237,14 +271,10 @@ def fig_region_surfaces(rw: RegionWindow, grid_pos: np.ndarray, axes: list[np.nd
         xs, ys = _outline(mask)
         fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line=dict(color="black", width=2), name=f"ridge: {name}",
                                  hoverinfo="skip"), row=r, col=c)
-    step = max(1, w // 12)
-    fig.update_xaxes(tickvals=list(range(0, w, step)), ticktext=[f"{v:g}" for v in axes[ax_a][::step]], title_text=names[ax_a],
-                     range=[-0.5, w - 0.5])
-    fig.update_yaxes(tickvals=list(range(h)), ticktext=[f"{v:g}" for v in axes[ax_b]] if ax_b is not None else [""],
-                     range=[-0.5, h - 0.5])
+    _grid_axes(fig, sl, axes, names)
     fig.update_yaxes(title_text=names[ax_b] if ax_b is not None else "", col=1)   # the right column shares it
     scale = {c: (vmax[c] or 1.0) for c in vmax}
-    slice_txt = ", ".join(f"{names[a]}={axes[a][best[a]]:g}" for a in fixed)
+    slice_txt = sl.slice_txt
     fig.update_layout(template="plotly_white", height=620, showlegend=False, margin=dict(l=50, r=20, t=70, b=40),
                       title=dict(text="net profit $, outline = largest connected top-20% region"
                                  + (f" · slice {slice_txt}" if slice_txt else ""), font=dict(size=12)),
@@ -252,6 +282,44 @@ def fig_region_surfaces(rw: RegionWindow, grid_pos: np.ndarray, axes: list[np.nd
                                      colorbar=dict(x=0.425, xanchor="left", len=0.9, thickness=12)),
                       coloraxis2=dict(colorscale="RdYlGn", cmin=-scale[2], cmax=scale[2],
                                       colorbar=dict(x=1.005, xanchor="left", len=0.9, thickness=12)))
+    return fig
+
+
+def fig_base_setting(b: BaseSetting, grid_pos: np.ndarray, axes: list[np.ndarray], names: list[str]) -> go.Figure:
+    """The pooled net profit surface over the base setting's basis as one heatmap (the slice
+    through the base setting on grids of 3+ parameters), the region outlined, the base setting
+    starred, the other ensemble members circled and Kaufman's five-best average crossed (display
+    only). Members outside the slice are not drawn; the card lists them."""
+    pos = np.asarray(grid_pos)
+    sl = _slice(pos, axes, names, b.centre)
+    img = np.full((sl.h, sl.w), np.nan)
+    img[sl.rows, sl.cols] = np.asarray(b.pooled, dtype=float)[sl.sel]
+    vmax = (float(np.nanmax(np.abs(img))) if np.isfinite(img).any() else 0.0) or 1.0
+    fig = go.Figure(go.Heatmap(z=img, x=list(range(sl.w)), y=list(range(sl.h)), colorscale="RdYlGn", zmin=-vmax, zmax=vmax,
+                               customdata=sl.label, name="net profit over the basis, pooled",
+                               hovertemplate="%{customdata}<br>pooled $%{z:,.0f}<extra></extra>",
+                               colorbar=dict(thickness=12, len=0.9)))
+    mask = np.zeros((sl.h, sl.w), dtype=bool)
+    mask[sl.rows, sl.cols] = np.asarray(b.component, dtype=bool)[sl.sel]
+    xs, ys = _outline(mask)
+    fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line=dict(color="black", width=2), name="region", hoverinfo="skip"))
+
+    def cell(i: int) -> tuple[int, int] | None:
+        if not sl.sel[i]:
+            return None
+        return int(pos[i, sl.ax_a]), (int(pos[i, sl.ax_b]) if sl.ax_b is not None else 0)
+
+    for name, members, symbol, size in (("base setting", [b.centre], "star", 18), ("ensemble", b.ensemble[1:], "circle-open", 15),
+                                        ("Kaufman's average (display only)", [b.kaufman], "x-thin-open", 14)):
+        pts = [q for q in (cell(i) for i in members) if q is not None]
+        fig.add_trace(go.Scatter(x=[q[0] for q in pts], y=[q[1] for q in pts], mode="markers", name=name, hoverinfo="name",
+                                 marker=dict(symbol=symbol, size=size, color="black", line=dict(width=2, color="black"))))
+    _grid_axes(fig, sl, axes, names)
+    fig.update_yaxes(title_text=names[sl.ax_b] if sl.ax_b is not None else "")
+    fig.update_layout(template="plotly_white", height=380, margin=dict(l=50, r=20, t=50, b=40), showlegend=True,
+                      legend=dict(orientation="h", y=-0.25, x=0),
+                      title=dict(text=f"pooled net profit $, {b.basis_start:%Y-%m-%d} → {b.basis_end:%Y-%m-%d}"
+                                 + (f" · slice {sl.slice_txt}" if sl.slice_txt else ""), font=dict(size=12)))
     return fig
 
 

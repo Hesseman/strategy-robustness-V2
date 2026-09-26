@@ -36,6 +36,13 @@ def test_persistent_passes_wfc_gate_and_reports_everything():
     assert g["windows_complete"] == 1 and g["windows_ahead"] == 1
     assert g["region_minus_grid"] == [r.region.windows[0].region_oos_mean - r.region.windows[0].grid_oos_mean]
     assert r.meta["windows"][0]["region_minus_grid"] == g["region_minus_grid"][0] > 0
+    b = r.base                                                        # the recommended base setting
+    assert b.confidence == "supported" and b.reading == "edge" and b.component[b.centre] and b.ensemble[0] == b.centre
+    assert b.centre_params == [float(v) for v in grid.params[b.centre]] and b.axis_class == ["unclassified", "unclassified"]
+    assert (b.basis_start, b.basis_end) == (grid.dates[r.windows[0].is_mask][0], grid.dates[-1])   # last window's IS + OOS
+    rw = r.region.windows[0]
+    assert r.meta["windows"][0]["centre_params"] == [float(v) for v in grid.params[rw.centre_index]]
+    assert np.isfinite(r.region.pct_centre) and r.region.pct_centre == rw.pct_centre
 
 
 def _drift(grid, per_day, split=800):
@@ -58,6 +65,7 @@ def test_verdict_matrix_has_the_lift_as_the_row_test_and_the_oos_sign_as_the_col
         r = run_multiwalk_battery(_drift(grid, per_day), groups, n_null=199, n_boot=50, seed=0)
         assert (r.meta["wfc_reading"], r.verdicts["wfc"]) == (reading, verdict), (structure, per_day, r.region.p_lift)
         assert r.meta["wfc_scoreable"] is True and r.gates_passed == int(verdict == "pass") and r.gates_total == 1
+        assert r.base.confidence == {"edge": "supported", "plateau": "low stakes"}.get(reading, "none")
         lifts.setdefault(structure, set()).add((round(r.region.lift, 9), r.region.p_lift))
     assert all(len(v) == 1 for v in lifts.values())                  # the drift never touched the row test
 
@@ -116,6 +124,8 @@ def test_json_export_is_finite_and_complete():
     assert len(rw["null_lift"]) == 20 and len(rw["region"]) == 7 and len(rw["ridge_is"]) == 36 and "wfc_reading" in d["meta"]
     assert set(d["meta"]["wfc_guards"]) == {"n_eff_median", "few_variants", "region_oos_mean", "grid_oos_mean",
                                             "region_minus_grid", "windows_ahead", "windows_complete"}
+    assert {"confidence", "centre_params", "ensemble_params", "ranges", "axis_class", "kaufman_contiguous"} <= set(d["base"])
+    assert len(d["meta"]["windows"][0]["centre_params"]) == 2
     json.dumps(d, allow_nan=False)
 
 
