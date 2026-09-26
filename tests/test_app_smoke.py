@@ -99,9 +99,12 @@ def test_app_renders_multiwalk_section_on_sample(tmp_path, monkeypatch):
     assert not at.exception, [str(e) for e in at.exception]
     joined = "\n".join(el.value for el in at.markdown)
     assert "Walk Forward Correlation" in joined and "Plateau" in joined and "Selection haircut" in joined
-    assert "PASS" in joined or "FAIL" in joined
+    assert "✓ PASS" in joined and "region lift pooled over" in joined and "Tinsley's correlation (continuity, not the gate)" in joined
     tabs = [t.label for t in at.tabs]
-    assert "Scatter" in tabs and "Ranked profile" in tabs and "Bands" not in tabs   # 20 combinations: no bands
+    assert tabs[:3] == ["Surface", "Scatter", "Ranked profile"] and "Bands" not in tabs   # 20 combinations: no bands
+    assert "Null (lift)" in tabs and "Null (ρ)" in tabs
+    assert "Read with the PASS:" in joined and "ahead of the grid in **1 of 1** complete window" in joined
+    assert "context, not a gate" in joined
     assert "top 6 in-sample → median out-of-sample rank" in joined
     import re
     assert re.search(r"(?<!\\)\$\d", joined) is None, "an unescaped dollar amount reached st.markdown"
@@ -120,11 +123,14 @@ def test_multiwalk_window_choice_rerenders_with_trade_counts(tmp_path, monkeypat
         assert label in joined and "trades per combination in/out" in joined and "best in-sample" in joined
 
 
-def test_multiwalk_not_informative_verdict_renders(tmp_path, monkeypatch):
-    from robustness import multiwalk_battery
+def test_multiwalk_plateau_branch_renders(tmp_path, monkeypatch):
+    """Identical variants - every combination carries iteration 1's daily P&L and trades - leave
+    one distinct out-of-sample pattern, fewer than twice the region: not scored, plateau."""
     from robustness.synthetic_multiwalk import make_multiwalk, make_walkforward_db
-    monkeypatch.setattr(multiwalk_battery, "NEFF_MIN", 1e9)   # every WFC fail now reads not informative
     text, sched = make_multiwalk({"A": list(range(5)), "B": list(range(4))}, n_days=600, seed=8, structure="noise", split=400)
+    head, first, *rest = text.strip().split("\n")
+    body = first.split("~", 1)[1]
+    text = "\n".join([head, first] + [line.split("~", 1)[0] + "~" + body for line in rest]) + "\n"
     d = tmp_path / "mw_noise"; (d / "Optimization Files").mkdir(parents=True); (d / "Walkforward Files").mkdir()
     (d / "Optimization Files" / "Noise_MW [@SYN-30min]_MultiWalk.txt").write_text(text, encoding="utf-8")
     (d / "Walkforward Files" / "WalkforwardData.db").write_bytes(make_walkforward_db(sched))
@@ -134,8 +140,8 @@ def test_multiwalk_not_informative_verdict_renders(tmp_path, monkeypatch):
     at.run()
     assert not at.exception, [str(e) for e in at.exception]
     joined = "\n".join(el.value for el in at.markdown)
-    assert "WFC gate not applied" in joined and "combinations nearly identical - gate not applied" in joined
-    assert "Gates passed: 0 of 1" not in joined
+    assert "WFC gate not applied" in joined and "PLATEAU - parameter choice immaterial, gate not applied" in joined
+    assert "repeat out of sample" in joined and "Gates passed: 0 of 1" not in joined
 
 
 def test_capital_radio_switches_the_drawdown_line(tmp_path, monkeypatch):

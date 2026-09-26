@@ -23,26 +23,8 @@ def _correlated_noise_grid(seed, shape=(6, 6), n_days=600, rho=0.9, trade_p=0.2)
     """A grid with nothing planted whose cells share most of their noise, as real neighbouring
     parameter sets share most of their trades: per trade P&L = sqrt(rho) x a field smoothed
     over the grid + sqrt(1 - rho) x own noise, every cell trading on the same days."""
-    import itertools
-
-    import pandas as pd
-
-    from robustness.multiwalk_text import MultiWalkGrid
-    rng = np.random.default_rng(seed)
-    pos = np.array(list(itertools.product(*[range(s) for s in shape])), dtype=int)
-    n = len(pos)
-    trade_day = rng.random(n_days) < trade_p
-    white = rng.normal(size=(n, n_days))
-    d = np.abs(pos[:, None, :] - pos[None, :, :]).max(axis=2)
-    field = np.stack([white[d[i] <= 2].mean(axis=0) for i in range(n)])
-    field /= field.std(axis=1, keepdims=True)
-    noise = np.sqrt(rho) * field + np.sqrt(1 - rho) * rng.normal(size=(n, n_days))
-    daily = np.round(100.0 * trade_day[None, :] * noise, 2)
-    dates = pd.bdate_range("2020-01-06", periods=n_days)
-    ed = dates.values[trade_day].astype("datetime64[D]")
-    return MultiWalkGrid(param_names=[f"p{k}" for k in range(len(shape))], params=pos.astype(float),
-                         axes=[np.arange(s, dtype=float) for s in shape], grid_pos=pos, dates=dates, daily_pnl=daily,
-                         closed_pnl=daily.copy(), exit_dates=[ed] * n, exit_pnl=[daily[i, trade_day] for i in range(n)])
+    from robustness.synthetic_multiwalk import make_planted_grid
+    return make_planted_grid(shape, structure="noise", rho=rho, trade_p=trade_p, n_days=n_days, seed=seed)
 
 
 def test_default_null_is_signflip_with_n_null_draws_and_deterministic():

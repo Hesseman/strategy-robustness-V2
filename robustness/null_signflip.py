@@ -1,5 +1,7 @@
 """Block sign-flip null of a walk-forward window's out-of-sample surface (spec decision 5,
-amended 2026-09-25). H0: no parameter combination is expected to differ from the grid average
+amended 2026-09-25; why and evidence: docs/wfc-region-lift.md, 'The null'). It serves both the
+region lift (region_wfc, the WFC gate) and Tinsley's correlation (wfc_grid, the continuity number).
+H0: no parameter combination is expected to differ from the grid average
 out of sample. Each OOS day's vector of cell P&L is split into its cross-cell mean (the
 strategy's common path, kept as is) and the deviations from it; the deviations of every block
 of `block` consecutive OOS trading days get one random sign, and the window metric is
