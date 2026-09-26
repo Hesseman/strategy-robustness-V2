@@ -104,6 +104,77 @@ def ridge(values: np.ndarray, grid_pos: np.ndarray, q: float = Q_TOP) -> np.ndar
     return largest_component(np.isfinite(v) & (v >= np.nanquantile(v, 1 - q)), grid_pos)
 
 
+# The centre of a ridge and a spread ensemble inside it (docs/wfc-region-lift.md, 'Base setting').
+# Fixed a priori, like Q_TOP: a centre needs a ridge of CENTRE_MIN_CELLS; an ensemble holds one
+# member per ENSEMBLE_CELLS_PER_MEMBER ridge cells, at most ENSEMBLE_MAX (Kaufman's four).
+CENTRE_MIN_CELLS = 3
+ENSEMBLE_MAX = 4
+ENSEMBLE_CELLS_PER_MEMBER = 3
+
+
+def medoid(mask: np.ndarray, grid_pos: np.ndarray, values: np.ndarray) -> int:
+    """Accepts a non-empty boolean mask (a region), the grid positions and a value per combination.
+    Returns the index of the masked combination nearest the region's centroid (Euclidean, grid
+    steps); ties go to the higher value, then to grid order. Guarantees the result is in the mask."""
+    idx = np.flatnonzero(np.asarray(mask, dtype=bool))
+    pos = np.asarray(grid_pos, dtype=float)[idx]
+    dist = np.round(np.linalg.norm(pos - pos.mean(axis=0), axis=1), 9)
+    return int(idx[np.lexsort((idx, -np.asarray(values, dtype=float)[idx], dist))[0]])
+
+
+@dataclass
+class Centre:
+    index: int                   # the centre pick
+    component: np.ndarray        # the ridge it was taken from (boolean mask)
+    is_peak: bool                # True when the ridge had fewer than CENTRE_MIN_CELLS: the pooled peak instead
+
+
+def centre_pick(pooled: np.ndarray, grid_pos: np.ndarray) -> Centre:
+    """The centre of a pooled surface's ridge (ridge(), medoid()). With fewer than
+    CENTRE_MIN_CELLS in the ridge a centre means nothing, so the pooled peak (top_set) is returned
+    instead and is_peak says so."""
+    component = ridge(pooled, grid_pos)
+    if int(component.sum()) < CENTRE_MIN_CELLS:
+        return Centre(index=int(top_set(pooled, 1)[0]), component=component, is_peak=True)
+    return Centre(index=medoid(component, grid_pos, pooled), component=component, is_peak=False)
+
+
+@dataclass
+class Ensemble:
+    indices: list[int]           # the centre first, then the spread members
+    spacing: int                 # minimum Chebyshev distance between members (2, or 1 on a thin ridge)
+    interior: bool               # the ridge had interior cells (every existing neighbour inside it)
+
+
+def spread_ensemble(component: np.ndarray, grid_pos: np.ndarray, pooled: np.ndarray, centre: int) -> Ensemble:
+    """Up to k = min(ENSEMBLE_MAX, cells // ENSEMBLE_CELLS_PER_MEMBER) combinations (at least the
+    centre) spread over a ridge, each weighted 1/k.
+
+    Accepts the ridge mask, the grid positions, the pooled values and the centre's index. Greedy
+    from the centre: the ridge's interior cells (every existing Chebyshev-1 neighbour inside the
+    ridge) by pooled value, then its other cells, each taken only when it lies at least 2 steps
+    from every member already chosen - so the members sit inside the region, not on its edge where
+    the top-20% threshold cuts. A ridge without interior cells (one or two cells wide) keeps 1 step.
+    Ties in pooled value keep grid order. Guarantees the centre comes first and members are unique."""
+    component = np.asarray(component, dtype=bool)
+    pos = np.asarray(grid_pos)
+    cells = np.flatnonzero(component)
+    k = max(1, min(ENSEMBLE_MAX, cells.size // ENSEMBLE_CELLS_PER_MEMBER))
+    nbhd = neighbourhoods(pos)
+    interior = np.array([bool(component[nbhd[i]].all()) for i in cells])
+    spacing = 2 if interior.any() else 1
+    values = np.asarray(pooled, dtype=float)
+    ranked = [int(c) for group in (cells[interior], cells[~interior])
+              for c in group[np.lexsort((group, -values[group]))]]
+    chosen = [int(centre)]
+    for c in ranked:
+        if len(chosen) == k:
+            break
+        if c not in chosen and min(int(np.abs(pos[c] - pos[m]).max()) for m in chosen) >= spacing:
+            chosen.append(c)
+    return Ensemble(indices=chosen, spacing=spacing, interior=bool(interior.any()))
+
+
 def region_size(n: int) -> int:
     """|R| for a grid of n combinations: round(Q_TOP x n), at least 1."""
     return max(1, int(round(Q_TOP * n)))
@@ -166,6 +237,9 @@ class RegionWindow:
     pct_best_pooled: float       # ... of the best pooled in-sample combination (R's first)
     pct_region: float            # ... of the region ensemble (the mean of y over R)
     pct_pick: float              # ... of the window's pick; NaN without one
+    centre_index: int            # the centre of the IS ridge (centre_pick of x_pooled)
+    centre_is_peak: bool         # the ridge was under CENTRE_MIN_CELLS: the pooled peak stood in
+    pct_centre: float            # fifth pick rule: OOS percentile of that centre
 
 
 @dataclass
@@ -189,6 +263,7 @@ class RegionResult:
     pct_best_pooled: float
     pct_region: float
     pct_pick: float
+    pct_centre: float
 
 
 def _region_window(grid: MultiWalkGrid, w: Window, nbhd: list[np.ndarray], null: SignFlipNull, n_null: int,
@@ -217,6 +292,7 @@ def _region_window(grid: MultiWalkGrid, w: Window, nbhd: list[np.ndarray], null:
     precision = precision_of(yp) if scored else float("nan")
     null_precision = np.array([precision_of(d) for d in pool(draws, nbhd)]) if len(draws) else np.empty(0)
     ridge_is, ridge_oos = ridge(xp, grid.grid_pos), ridge(yp, grid.grid_pos)
+    centre = centre_pick(xp, grid.grid_pos)
     union = int((ridge_is | ridge_oos).sum())
     pos = np.asarray(grid.grid_pos, dtype=float)
     return RegionWindow(
@@ -230,7 +306,8 @@ def _region_window(grid: MultiWalkGrid, w: Window, nbhd: list[np.ndarray], null:
                      if ridge_is.any() and ridge_oos.any() else float("nan")),
         pct_best_is=_pct_rank(y, y[int(np.argmax(x))]), pct_best_pooled=_pct_rank(y, y[region[0]]),
         pct_region=_pct_rank(y, float(y[region].mean())),
-        pct_pick=_pct_rank(y, y[w.grid_row - 1]) if 1 <= w.grid_row <= n else float("nan"))
+        pct_pick=_pct_rank(y, y[w.grid_row - 1]) if 1 <= w.grid_row <= n else float("nan"),
+        centre_index=centre.index, centre_is_peak=centre.is_peak, pct_centre=_pct_rank(y, y[centre.index]))
 
 
 def region_test(grid: MultiWalkGrid, windows: list[Window], *, n_null: int = 999, seed: int = 0,
@@ -269,4 +346,5 @@ def region_test(grid: MultiWalkGrid, windows: list[Window], *, n_null: int = 999
         oos_positive_share=_mean([r.oos_positive_share for r in use]), precision=precision, p_precision=p_precision,
         ridge_jaccard=_mean([r.ridge_jaccard for r in use]), ridge_shift=_mean([r.ridge_shift for r in use]),
         pct_best_is=_mean([r.pct_best_is for r in use]), pct_best_pooled=_mean([r.pct_best_pooled for r in use]),
-        pct_region=_mean([r.pct_region for r in use]), pct_pick=_mean([r.pct_pick for r in use]))
+        pct_region=_mean([r.pct_region for r in use]), pct_pick=_mean([r.pct_pick for r in use]),
+        pct_centre=_mean([r.pct_centre for r in use]))
