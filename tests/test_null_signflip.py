@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from robustness.multiwalk_text import MultiWalkGrid
-from robustness.null_signflip import SignFlipNull
+from robustness.null_signflip import BlockBootstrapNull, SignFlipNull
 from robustness.surface import daily_drawdown_stats, metric_values, window_metrics
 from robustness.windows import Window
 
@@ -63,11 +63,12 @@ def test_np_draw_is_the_common_path_plus_signed_block_deviations():
     assert seen <= {tuple(v) for v in _PATTERNS.values()} and len(seen) == 4
 
 
-def test_identical_cells_are_never_separated():
+@pytest.mark.parametrize("null_cls", [SignFlipNull, BlockBootstrapNull])
+def test_identical_cells_are_never_separated(null_cls):
     grid = _grid(np.tile([[2.0, -1.0, 3.0, -2.0, 1.0, 4.0, -3.0, 2.0]], (4, 1)))
     w = _window(grid, 3)
     y = metric_values(window_metrics(grid, w.oos_mask), "NP")
-    draws = SignFlipNull(grid, "NP", block=2).draws(y, w, np.random.default_rng(1), 25)
+    draws = null_cls(grid, "NP", block=2).draws(y, w, np.random.default_rng(1), 25)
     assert np.array_equal(draws, np.tile(y, (25, 1)))
 
 
@@ -89,12 +90,13 @@ def test_npavgdd_draw_matches_a_scalar_recomputation_of_the_flipped_path():
     assert np.allclose(null.draw_one(y, w, _Signs(signs)), expected)
 
 
-def test_holes_in_the_observed_surface_stay_holes():
+@pytest.mark.parametrize("null_cls", [SignFlipNull, BlockBootstrapNull])
+def test_holes_in_the_observed_surface_stay_holes(null_cls):
     grid = _grid(np.random.default_rng(3).normal(size=(6, 40)))
     w = _window(grid, 20)
     y = metric_values(window_metrics(grid, w.oos_mask), "NP")
     y[[1, 4]] = np.nan
-    draws = SignFlipNull(grid, "NP").draws(y, w, np.random.default_rng(0), 10)
+    draws = null_cls(grid, "NP").draws(y, w, np.random.default_rng(0), 10)
     assert np.isnan(draws[:, [1, 4]]).all() and np.isfinite(np.delete(draws, [1, 4], axis=1)).all()
 
 
@@ -114,3 +116,53 @@ def test_metric_must_be_one_the_surface_knows():
     grid = _grid(np.ones((2, 6)))
     with pytest.raises(ValueError):
         SignFlipNull(grid, "Sharpe")
+
+
+# ---- the centred block bootstrap twin: the same blocks, resampled with replacement instead of flipped
+
+class _Picks:
+    """Stands in for the generator: hands out a fixed block pick per block position."""
+
+    def __init__(self, picks):
+        self.picks = np.asarray(picks, dtype=int)
+
+    def integers(self, low, high=None, size=None, **kwargs):
+        return self.picks[:size].copy()
+
+
+# One in-sample day, three out-of-sample days, blocks of two days: block 0 = OOS days 1-2, block 1 = OOS
+# day 3 (the window's last block is short).
+#   OOS daily P&L          c0 [3, -1, 4]   c1 [-1, 3, -2]
+#   grid mean per day      [1, 1, 1]      -> common net profit 3; observed surface [6, 0]
+#   deviations             c0 [2, -2, 3]  c1 [-2, 2, -3]
+#   centred per day        each combination's mean daily deviation (c0 +1, c1 -1) taken off every day:
+#                          c0 [1, -3, 2]  c1 [-1, 3, -2]
+#   centred block sums     c0 (-2, 2)     c1 (2, -2)
+#   a draw fills each block position with a block picked with replacement:
+#   picks (0, 0) -> [3 - 4, 3 + 4]; (0, 1) and (1, 0) -> the flat surface [3, 3]; (1, 1) -> [3 + 4, 3 - 4]
+_BOOT_DAILY = np.array([[5.0, 3, -1, 4], [5.0, -1, 3, -2]])
+_BOOT_PATTERNS = {(0, 0): [-1.0, 7.0], (0, 1): [3.0, 3.0], (1, 0): [3.0, 3.0], (1, 1): [7.0, -1.0]}
+
+
+def test_bootstrap_draw_is_the_common_path_plus_resampled_centred_block_deviations():
+    grid = _grid(_BOOT_DAILY)
+    w = _window(grid, 1)
+    y = metric_values(window_metrics(grid, w.oos_mask), "NP")
+    assert y.tolist() == [6.0, 0.0]
+    null = BlockBootstrapNull(grid, "NP", block=2)
+    for picks, expected in _BOOT_PATTERNS.items():
+        assert null.draw_one(y, w, _Picks(picks)).tolist() == expected
+    draws = null.draws(y, w, np.random.default_rng(0), 400)
+    assert draws.shape == (400, 2)
+    rows = [tuple(r) for r in draws.tolist()]
+    assert set(rows) == {(-1.0, 7.0), (3.0, 3.0), (7.0, -1.0)}
+    assert 0.4 <= rows.count((3.0, 3.0)) / 400 <= 0.6            # one pick of each block: half the draws
+
+
+def test_bootstrap_serves_net_profit_only():
+    """A resampled block can be shorter than the position it fills (the window's last block), so a
+    path metric such as NP/AvgDD has no rebuilt path to read; the region lift needs net profit only."""
+    grid = _grid(np.ones((2, 6)))
+    with pytest.raises(ValueError):
+        BlockBootstrapNull(grid, "NPAvgDD")
+    assert BlockBootstrapNull(grid, "NP").block == 21

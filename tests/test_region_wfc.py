@@ -115,6 +115,14 @@ def test_window_statistics_hand_traced():
     assert r.null_lift.size == 20 and 1 / 21 <= r.p_lift <= 1.0
 
 
+def _toy():
+    """The 3-cell toy of test_null_signflip: two in-sample days, four out-of-sample days."""
+    daily = np.array([[9.0, -9.0, 1, 1, 1, 1], [-9.0, 9.0, 3, 1, -1, 1], [0.0, 0.0, 2, 4, 0, 1]])
+    grid, w = _line_grid(daily[:, 0] + daily[:, 1], daily[:, 2:])
+    grid.daily_pnl, grid.closed_pnl = daily, daily.copy()                      # keep the toy's own IS days
+    return grid, w
+
+
 def test_null_draws_are_sign_flips_of_the_oos_deviations_scored_with_the_observed_sd():
     """Literal oracle, the 3-cell toy of test_null_signflip (two IS days, four OOS days, blocks of
     two): the four sign patterns rebuild the OOS surface as [4, 4, 7] (observed), [2, 6, 7],
@@ -122,9 +130,7 @@ def test_null_draws_are_sign_flips_of_the_oos_deviations_scored_with_the_observe
     R = [0] (grid order); SD of the observed surface = sqrt(2), so L = (4 - 5) / sqrt(2) and the
     null lifts are (y0 - 5) / sqrt(2) in {-1, -3, 3, 1} / sqrt(2). Pooled OOS [4, 5, 5.5] puts
     cell 2 on top (precision 0); only the two patterns that lift cell 0 put it on top (precision 1)."""
-    daily = np.array([[9.0, -9.0, 1, 1, 1, 1], [-9.0, 9.0, 3, 1, -1, 1], [0.0, 0.0, 2, 4, 0, 1]])
-    grid, w = _line_grid(daily[:, 0] + daily[:, 1], daily[:, 2:])
-    grid.daily_pnl, grid.closed_pnl = daily, daily.copy()                      # keep the toy's own IS days
+    grid, w = _toy()
     r = region_test(grid, [w], n_null=40, seed=3, block=2).windows[0]
     s2 = math.sqrt(2.0)
     assert r.k == 1 and r.region.tolist() == [0] and r.lift == pytest.approx(-1 / s2) and r.precision == 0.0
@@ -132,6 +138,24 @@ def test_null_draws_are_sign_flips_of_the_oos_deviations_scored_with_the_observe
     assert set(lifts.tolist()) == {-1.0, -3.0, 3.0, 1.0}                       # all four patterns drawn, nothing else
     assert r.null_precision.tolist() == [1.0 if v > 0 else 0.0 for v in lifts]   # lift and precision from the same draw
     assert r.p_lift == (1 + int((r.null_lift >= r.lift).sum())) / 41 and r.p_precision == 1.0
+
+
+def test_bootstrap_draws_resample_the_centred_blocks_beside_an_untouched_flip():
+    """Literal oracle, the same toy under the bootstrap twin (blocks of two). Centred block sums:
+    c0 (-1.5, 1.5), c1 (0.5, -0.5), c2 (1, -1), so a draw rebuilds [2, 6, 7] (block 0 twice), the flat
+    [5, 5, 5] (one of each) or [8, 4, 3] (block 1 twice); with R = [0] and the observed SD sqrt(2) the
+    bootstrap lifts are {-3, 0, 3} / sqrt(2) against the observed -1 / sqrt(2). The flip's draws are
+    still SignFlipNull's from the generator seeded seed + 1000 x window index: the bootstrap draws
+    from its own stream, so a result published before it existed reproduces to the draw."""
+    from robustness.null_signflip import SignFlipNull
+    grid, w = _toy()
+    r = region_test(grid, [w], n_null=40, seed=3, block=2).windows[0]
+    s2 = math.sqrt(2.0)
+    boot = np.round(r.null_lift_boot * s2, 9)
+    assert boot.size == 40 and set(boot.tolist()) == {-3.0, 0.0, 3.0}
+    assert r.p_lift_boot == (1 + int((boot >= -1.0).sum())) / 41
+    flip = SignFlipNull(grid, "NP", 2).draws(r.y, w, np.random.default_rng(3 + 1000 * w.index), 40)
+    assert np.allclose(r.null_lift * s2, flip[:, 0] - 5.0)
 
 
 def test_pooled_over_the_complete_windows_draw_by_draw():
@@ -158,8 +182,12 @@ def test_pooled_over_the_complete_windows_draw_by_draw():
     assert r.p_precision == (1 + int((null_p >= r.precision).sum())) / 31
     assert r.grid_oos_mean == pytest.approx(np.mean([w1.grid_oos_mean, w2.grid_oos_mean, w3.grid_oos_mean]))
     assert not np.array_equal(w1.null_lift, w2.null_lift)                        # windows draw independently
+    null_boot = np.mean([w1.null_lift_boot, w2.null_lift_boot, w3.null_lift_boot], axis=0)   # the cross-check pools alike
+    assert r.p_lift_boot == (1 + int((null_boot >= r.lift).sum())) / 31
+    assert not np.array_equal(w1.null_lift_boot, w1.null_lift)
     nothing = region_test(grid, [windows[3]], n_null=10, seed=0)
     assert nothing.n_complete == 0 and math.isnan(nothing.lift) and math.isnan(nothing.p_lift)
+    assert math.isnan(nothing.p_lift_boot)
 
 
 def test_identical_variants_leave_precision_and_jaccard_unscored_but_not_the_lift():
@@ -215,17 +243,39 @@ def test_region_lift_outpowers_the_pointwise_correlation_on_a_narrow_ridge_with_
 def test_region_lift_size_is_controlled_on_correlated_noise_grids():
     """Oracle for the statistic under its null: nothing planted, neighbours sharing 90% of their
     noise (the generator of test_wfc_grid's size oracle) - the lift must pass at most 7% of the
-    time at the 5% level; overlap precision (display only) is conservative (2.6% in the sweep)."""
+    time at the 5% level; overlap precision (display only) is conservative (2.6% in the sweep).
+    The centred block bootstrap, the cross-check, must pass at most 10% (the method's stop line):
+    its plug-in variance runs (B - 1) / B low with B blocks per window, so it is a little liberal
+    on short windows (7.6% against the flip's 6.1% in the sweep, 12 blocks per window)."""
     from robustness.synthetic_multiwalk import make_planted_grid
     from robustness.windows import custom_windows
-    lift = prec = 0
+    lift = prec = boot = 0
     seeds = range(200)
     for seed in seeds:
         grid = make_planted_grid((6, 6), structure="noise", rho=0.9, trade_p=0.2, n_days=600, seed=seed)
         r = region_test(grid, [custom_windows(grid.dates, "single")[0]], n_null=199, seed=seed)
         lift += r.p_lift < 0.05
         prec += r.p_precision < 0.05
+        boot += r.p_lift_boot < 0.05
     assert lift <= 0.07 * len(seeds) and prec <= 0.07 * len(seeds), (lift, prec)
+    assert boot <= 0.10 * len(seeds), boot
+
+
+def test_both_nulls_hold_their_size_on_rare_large_trades():
+    """Skewed noise, nothing planted (make_planted_grid tail='jumps': 3% of trades are large winners,
+    the rest small losers; mean 0). The flip is no longer exact - its symmetry assumption fails -
+    and the bootstrap keeps the skew instead of flipping it away; neither may pass more than 10%
+    of the time at the 5% level (the sweep: flip 2.2%, bootstrap 3.5%)."""
+    from robustness.synthetic_multiwalk import make_planted_grid
+    from robustness.windows import custom_windows
+    flip = boot = 0
+    seeds = range(200)
+    for seed in seeds:
+        grid = make_planted_grid((6, 6), structure="noise", rho=0.9, trade_p=0.2, n_days=600, tail="jumps", seed=seed)
+        r = region_test(grid, [custom_windows(grid.dates, "single")[0]], n_null=199, seed=seed)
+        flip += r.p_lift < 0.05
+        boot += r.p_lift_boot < 0.05
+    assert flip <= 0.10 * len(seeds) and boot <= 0.10 * len(seeds), (flip, boot)
 
 
 def test_a_decayed_surface_never_passes():
