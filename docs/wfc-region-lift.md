@@ -6,8 +6,9 @@ did the parameter combinations that looked best in-sample also do better out-of-
 pooled in-sample surface are tested against the grid average out-of-sample, under a **block
 sign-flip null**. Tinsley's correlation (SSRN 6324079), the card's original statistic, is still
 computed and shown for continuity, but it no longer decides. Since 2026-09-26 the verdict is
-followed by a **base setting**: the combination to trade, taken from the centre of the in-sample
-region rather than its peak, with a confidence that follows the verdict.
+followed by a **base setting**: the combination to trade, taken from the best region of the grid
+rather than its luckiest cell - the region's pooled peak after a PASS, its centre on a plateau -
+with a confidence that follows the verdict.
 
 This file is the single source of truth for the method: the definitions, the decisions and why
 they were taken, the evidence, and the known gaps. Code docstrings point here.
@@ -111,8 +112,9 @@ column:
 
 ## Base setting (`robustness/base_setting.py`)
 
-After the verdict, which combination to trade. This is Kaufman's rule (take the best settings and
-trade their middle, not the peak), done on the grid, where "middle" can be measured.
+After the verdict, which combination to trade. The region replaces the single best cell:
+Kaufman's rule (take the best settings and trade their middle, not the peak), done on the grid.
+Which point of the region depends on the verdict (decision 7).
 
 - **Basis:** the last walk-forward window's in-sample plus its out-of-sample to the last data day
   (`base_setting.basis_mask`). On the 1-split scheme, whose one window spans all the history, it is
@@ -121,10 +123,12 @@ trade their middle, not the peak), done on the grid, where "middle" can be measu
 - **Region:** each combination's net profit over the basis, pooled with its Chebyshev-1
   neighbours; the region is the largest connected set at or above the pooled surface's 80th
   percentile (`region_wfc.ridge`).
-- **Base setting:** the region's combination nearest its centroid, in grid steps
-  (`region_wfc.medoid`). Ties go to the higher pooled value, then grid order. With fewer than
+- **Base setting (`pick`):** after a PASS, the pooled peak (`peak`: the best neighbourhood
+  average, ties in grid order; `peak_in_region` says whether it lies in the region outlined). Any
+  other verdict: the centre (`centre`), the region's combination nearest its centroid in grid
+  steps (`region_wfc.medoid`), ties to the higher pooled value, then grid order. With fewer than
   `CENTRE_MIN_CELLS` = 3 cells a region has no meaningful centre, so the pooled peak stands in
-  (`centre_pick`, `is_peak`).
+  (`centre_pick`, `centre_is_peak`).
 - **Ensemble** (`region_wfc.spread_ensemble`): k = min(`ENSEMBLE_MAX` = 4, cells ÷
   `ENSEMBLE_CELLS_PER_MEMBER` = 3) members, at least the centre, each run at 1/k size. Greedy from
   the centre: interior cells first (every existing neighbour inside the region), by pooled value,
@@ -135,7 +139,7 @@ trade their middle, not the peak), done on the grid, where "middle" can be measu
 
   | reading | confidence | what the card says |
   |---|---|---|
-  | edge | supported | trade the centre (and the ensemble) |
+  | edge | supported | trade the pooled peak; the centre and the ensemble are the diversified alternative |
   | plateau | low stakes | any setting in the region does about as well; take the centre |
   | noise, loser or insufficient | none | no base setting recommended; the centre is shown for reference only |
 
@@ -202,6 +206,18 @@ All dated 2026-09-25, owner's call:
      recommendation worse. Parameters are used as tested, labelled, and their centre by window is
      shown so drift stays visible.
    - Revisit only with a strategy whose own windows show its dollar optimum tracking volatility.
+7. **After a PASS the base setting is the pooled peak; otherwise the centre** (2026-09-26). The
+   design first took the centre for every verdict.
+   - On the five real runs with a PASS, the pooled peak averaged the 83rd out-of-sample percentile
+     and the centre the 75th (the best in-sample cell 74). The research note's synthetic ridges
+     point the same way (pooled peak 93 against a region ensemble of 80-84 with 127 out-of-sample
+     trades per combination).
+   - The reading: on a real, persistent ridge its strongest part is what persists. The centre's
+     hedge pays when the region moves, which is the plateau case, where it is as good as any rule
+     and the most stable.
+   - Five runs, two of them from one strategy: plausible, not settled. On a ridge one cell wide,
+     pooling blurs the peak and the raw peak does better (research note); the fifth pick rule
+     window by window shows how the chosen rule held for a given strategy.
 
 ## Evidence
 

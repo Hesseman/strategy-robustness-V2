@@ -76,6 +76,31 @@ def test_base_setting_hand_traced():
     assert b.pooled.tolist() == pytest.approx([0, 0, 2, 5, 7, 5, 2, 0, 0, 0])
 
 
+# Hand trace, twenty cells in a line, basis net profit 10 on cells 5-12 and 20 on cell 12:
+#   pooled   ... 3.3 (4), 6.7 (5), 10 (6-10), 13.3 (11), 10 (12), 6.7 (13) ...
+#   top-fifth threshold 10 -> region = cells 6-12 (7 cells): centre 9 (centroid), pooled peak 11
+#   k = min(4, 7 // 3) = 2; interior cells 7-11; from the centre, 11 (pooled 13.3) sits 2 steps away
+_RAMP = [[0.0] * 4 for _ in range(20)]
+for _i in range(5, 13):
+    _RAMP[_i][0] = 10.0
+_RAMP[12][0] = 20.0
+
+
+def test_the_pick_is_the_pooled_peak_after_an_edge_and_the_centre_on_a_plateau():
+    """User decision 2026-09-26: on the five real edges the pooled peak scored better out of sample
+    than the centre (83 vs 75 percentile), as the research note's pick guidance expects; the
+    centre's hedge pays when a region moves - the plateau case."""
+    grid = _grid(_RAMP)
+    w = _window(grid, 1, [0, 1], [2, 3])
+    edge = base_setting(grid, [w], "edge", "multiwalk")
+    assert (edge.centre, edge.peak, edge.n_component) == (9, 11, 7) and edge.peak_in_region
+    assert (edge.pick, edge.pick_rule, edge.pick_params) == (11, "pooled peak", [1100.0])
+    assert edge.ensemble == [9, 11]
+    flat = base_setting(grid, [w], "plateau", "multiwalk")
+    assert (flat.pick, flat.pick_rule, flat.pick_params) == (9, "centre", [900.0])
+    assert base_setting(grid, [w], "noise", "multiwalk").pick_rule == "centre"      # reference only
+
+
 def test_confidence_follows_the_verdict():
     grid = _grid(_BASIS)
     w = _window(grid, 1, [0, 1], [2, 3])

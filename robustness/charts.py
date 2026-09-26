@@ -288,10 +288,11 @@ def fig_region_surfaces(rw: RegionWindow, grid_pos: np.ndarray, axes: list[np.nd
 def fig_base_setting(b: BaseSetting, grid_pos: np.ndarray, axes: list[np.ndarray], names: list[str]) -> go.Figure:
     """The pooled net profit surface over the base setting's basis as one heatmap (the slice
     through the base setting on grids of 3+ parameters), the region outlined, the base setting
-    starred, the other ensemble members circled and Kaufman's five-best average crossed (display
-    only). Members outside the slice are not drawn; the card lists them."""
+    starred (the pooled peak after an edge, else the centre), the region's centre as a diamond when
+    it is not the base setting, the other ensemble members circled and Kaufman's five-best average
+    crossed (display only). Points outside the slice are not drawn; the card lists them."""
     pos = np.asarray(grid_pos)
-    sl = _slice(pos, axes, names, b.centre)
+    sl = _slice(pos, axes, names, b.pick)
     img = np.full((sl.h, sl.w), np.nan)
     img[sl.rows, sl.cols] = np.asarray(b.pooled, dtype=float)[sl.sel]
     vmax = (float(np.nanmax(np.abs(img))) if np.isfinite(img).any() else 0.0) or 1.0
@@ -309,7 +310,9 @@ def fig_base_setting(b: BaseSetting, grid_pos: np.ndarray, axes: list[np.ndarray
             return None
         return int(pos[i, sl.ax_a]), (int(pos[i, sl.ax_b]) if sl.ax_b is not None else 0)
 
-    for name, members, symbol, size in (("base setting", [b.centre], "star", 18), ("ensemble", b.ensemble[1:], "circle-open", 15),
+    for name, members, symbol, size in (("base setting", [b.pick], "star", 18),
+                                        ("centre", [b.centre] if b.centre != b.pick else [], "diamond-open", 15),
+                                        ("ensemble", [i for i in b.ensemble[1:] if i != b.pick], "circle-open", 15),
                                         ("Kaufman's average (display only)", [b.kaufman], "x-thin-open", 14)):
         pts = [q for q in (cell(i) for i in members) if q is not None]
         fig.add_trace(go.Scatter(x=[q[0] for q in pts], y=[q[1] for q in pts], mode="markers", name=name, hoverinfo="name",

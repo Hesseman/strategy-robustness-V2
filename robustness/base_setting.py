@@ -2,10 +2,12 @@
 in, which parameter combination to trade. Kaufman's rule - take the best settings and trade the
 middle of them, not the peak - done on the grid: the basis is the last walk-forward window's in-
 sample plus its out-of-sample to date (the later half of the history on the 1-split scheme); the
-pick is the centre of the largest connected top-20% region of the pooled net-profit surface over
-that basis (region_wfc.centre_pick), with a spread ensemble inside the region
-(region_wfc.spread_ensemble). The confidence comes from the verdict: 'supported' after an edge,
-'low stakes' on a plateau (the choice hardly matters - take the centre), 'none' otherwise. The
+region is the largest connected top-20% area of the pooled net-profit surface over that basis.
+The pick follows the verdict (user decision 2026-09-26): after an edge, the pooled peak - on the
+real edges tested the strongest part of the region held best out of sample - with the region's
+centre (region_wfc.centre_pick) and a spread ensemble (region_wfc.spread_ensemble) as the
+diversified alternative; otherwise the centre. The confidence: 'supported' after an edge, 'low
+stakes' on a plateau (the choice hardly matters - take the centre), 'none' otherwise. The
 literal average of the five best combinations is reported for display, flagged when those five
 are not one connected area; it is never the pick. Parameters are classified by name (dollar or
 point amounts vs bars, percentages, multiples) for labelling only: on the real grids tested,
@@ -26,6 +28,7 @@ from robustness.windows import Window
 
 KAUFMAN_TOP = 5                                    # the "five best" of Kaufman's display line; fixed
 CONFIDENCE = {"edge": "supported", "plateau": "low stakes"}      # any other reading: "none"
+PICK_RULE = {"edge": "pooled peak"}                              # any other reading: "centre"
 
 # Name fragments, matched case-insensitively. Scale-free words win, so 'StopATR' and
 # 'ProfitTargetMultiplier' stay scale-free; a name with neither reads 'unclassified'.
@@ -69,8 +72,14 @@ class BaseSetting:
     basis_start: pd.Timestamp
     basis_end: pd.Timestamp
     n_basis_days: int
-    centre: int                      # iteration index of the base setting
-    centre_is_peak: bool             # the region had < 3 cells: the pooled peak stands in
+    pick: int                        # iteration index of the base setting
+    pick_rule: str                   # 'pooled peak' after an edge, else 'centre'
+    pick_params: list[float]
+    peak: int                        # the pooled surface's best combination (ties: grid order)
+    peak_params: list[float]
+    peak_in_region: bool             # the peak lies inside the region (it can top a smaller area)
+    centre: int                      # the region's centre (region_wfc.centre_pick)
+    centre_is_peak: bool             # the region had < 3 cells: the pooled peak stands in as its centre
     centre_params: list[float]
     ensemble: list[int]              # centre first; weight 1/len each
     ensemble_params: list[list[float]]
@@ -92,9 +101,10 @@ def base_setting(grid: MultiWalkGrid, windows: list[Window], reading: str, schem
     Accepts the grid, its windows, the WFC verdict reading ('edge' | 'loser' | 'plateau' |
     'noise' | 'insufficient') and the window scheme. Returns a BaseSetting computed over
     basis_mask(): the centre of the pooled surface's ridge (or its peak on a ridge under 3 cells),
-    the spread ensemble, the region's size and parameter ranges, the parameter classes, and
-    Kaufman's five-best average for display. Guarantees everything is computed whatever the
-    reading - the confidence says whether to use it - and deterministic output."""
+    the pooled peak, the pick (the peak after an edge, else the centre), the spread ensemble, the
+    region's size and parameter ranges, the parameter classes, and Kaufman's five-best average for
+    display. Guarantees everything is computed whatever the reading - the confidence says whether
+    to use it - and deterministic output."""
     mask = basis_mask(windows, grid.n_days, scheme)
     x = window_metrics(grid, mask).net_profit.astype(float)
     pos = np.asarray(grid.grid_pos)
@@ -102,6 +112,9 @@ def base_setting(grid: MultiWalkGrid, windows: list[Window], reading: str, schem
     centre = centre_pick(pooled, pos)
     ens = spread_ensemble(centre.component, pos, pooled, centre.index)
     comp = centre.component
+    peak = int(top_set(pooled, 1)[0])
+    rule = PICK_RULE.get(reading, "centre")
+    pick = peak if rule == "pooled peak" else centre.index
     top = top_set(x, min(KAUFMAN_TOP, grid.n_iter))
     mean_pos = pos[top].mean(axis=0)
     kaufman = int(np.argmin(np.linalg.norm(pos - mean_pos, axis=1)))
@@ -110,7 +123,9 @@ def base_setting(grid: MultiWalkGrid, windows: list[Window], reading: str, schem
     dates = grid.dates[mask]
     return BaseSetting(
         confidence=CONFIDENCE.get(reading, "none"), reading=reading, basis_start=pd.Timestamp(dates[0]),
-        basis_end=pd.Timestamp(dates[-1]), n_basis_days=int(mask.sum()), centre=centre.index,
+        basis_end=pd.Timestamp(dates[-1]), n_basis_days=int(mask.sum()), pick=pick, pick_rule=rule,
+        pick_params=[float(v) for v in grid.params[pick]], peak=peak, peak_params=[float(v) for v in grid.params[peak]],
+        peak_in_region=bool(comp[peak]), centre=centre.index,
         centre_is_peak=centre.is_peak, centre_params=[float(v) for v in grid.params[centre.index]],
         ensemble=ens.indices, ensemble_params=[[float(v) for v in grid.params[i]] for i in ens.indices],
         ensemble_spacing=ens.spacing, ensemble_interior=ens.interior, component=comp, n_component=int(comp.sum()),

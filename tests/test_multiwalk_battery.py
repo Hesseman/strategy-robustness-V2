@@ -38,6 +38,7 @@ def test_persistent_passes_wfc_gate_and_reports_everything():
     assert r.meta["windows"][0]["region_minus_grid"] == g["region_minus_grid"][0] > 0
     b = r.base                                                        # the recommended base setting
     assert b.confidence == "supported" and b.reading == "edge" and b.component[b.centre] and b.ensemble[0] == b.centre
+    assert b.pick_rule == "pooled peak" and b.pick == b.peak == int(np.argmax(b.pooled))       # after an edge: the pooled peak
     assert b.centre_params == [float(v) for v in grid.params[b.centre]] and b.axis_class == ["unclassified", "unclassified"]
     assert (b.basis_start, b.basis_end) == (grid.dates[r.windows[0].is_mask][0], grid.dates[-1])   # last window's IS + OOS
     rw = r.region.windows[0]

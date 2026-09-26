@@ -107,6 +107,7 @@ def test_app_renders_multiwalk_section_on_sample(tmp_path, monkeypatch):
     assert "context, not a gate" in joined
     assert "Base setting - which combination to trade?" in joined and "SUPPORTED" in joined
     assert "**base setting:** A = " in joined and "centre of a region of" in joined and "Kaufman's average" in joined
+    assert "the pooled peak of the region" in joined
     assert "the centre rule window by window" in joined
     assert "top 6 in-sample → median out-of-sample rank" in joined
     import re
@@ -145,7 +146,7 @@ def test_multiwalk_plateau_branch_renders(tmp_path, monkeypatch):
     joined = "\n".join(el.value for el in at.markdown)
     assert "WFC gate not applied" in joined and "PLATEAU - parameter choice immaterial, gate not applied" in joined
     assert "repeat out of sample" in joined and "Gates passed: 0 of 1" not in joined
-    assert "LOW STAKES - take the centre" in joined
+    assert "LOW STAKES - take the centre" in joined and "the centre of the region" in joined
 
 
 def test_capital_radio_switches_the_drawdown_line(tmp_path, monkeypatch):

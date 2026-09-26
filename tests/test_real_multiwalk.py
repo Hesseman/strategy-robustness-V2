@@ -141,6 +141,7 @@ def test_base_setting_on_le2601_reads_low_stakes_and_fits_on_the_last_window(gri
     assert b.confidence == "low stakes" and b.reading == "plateau"
     assert b.basis_start == grid.dates[last.is_mask][0] and b.basis_end == grid.dates[-1]
     assert b.component[b.centre] and b.n_component >= 3 and not b.centre_is_peak
+    assert b.pick_rule == "centre" and b.pick == b.centre                                        # a plateau: the centre
     assert b.axis_class == ["scale-free", "price-scaled", "scale-free"]
     assert np.isfinite(r.region.pct_centre) and all(len(w["centre_params"]) == 3 for w in r.meta["windows"])
     print("LE2601 base setting:", dict(zip(grid.param_names, b.centre_params)), "region", b.n_component, "cells",

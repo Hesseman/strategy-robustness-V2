@@ -123,10 +123,12 @@ What the four cards mean:
   out-of-sample rank as dots on the same chart), bands (100+ combinations: mean out-of-sample
   result per tenth of the in-sample ranking) and the two nulls; the top in-sample combinations
   are outlined in red.
-- **Base setting** — which combination to trade once the WFC verdict is in: the centre of the
-  best region of the grid (the largest connected top-20% area of the pooled surface, fitted on
-  the last walk-forward window's in-sample plus its out-of-sample), not its single best cell,
-  plus an ensemble of up to 4 combinations spread inside the region at 1/k size each. Its
+- **Base setting** — which combination to trade once the WFC verdict is in, taken from the best
+  region of the grid (the largest connected top-20% area of the pooled surface, fitted on the last
+  walk-forward window's in-sample plus its out-of-sample) rather than its single best cell: after
+  a PASS the region's pooled peak (the best neighbourhood average, which held up best on real
+  edges), otherwise its centre (Kaufman: trade the middle of the best settings), plus an ensemble
+  of up to 4 combinations spread inside the region at 1/k size each. Its
   confidence follows the verdict: supported after a PASS, low stakes on a plateau (any setting
   in the region does about as well — take the centre), none otherwise. The card scores the
   centre rule window by window against the best in-sample combination and MultiWalk's pick,

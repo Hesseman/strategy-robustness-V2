@@ -503,20 +503,25 @@ def _short(params: list[float]) -> str:
     return "/".join(f"{v:g}" for v in params)
 
 
-bs_lines = [{"supported": "the WFC test found an edge localised in the in-sample region: trade its centre, not its peak",
+bs_lines = [{"supported": "the WFC test found an edge localised in the in-sample region: trade its pooled peak - on the real "
+                          "edges tested, the strongest part of the region held best out of sample",
              "low stakes": "the WFC test found the parameter choice immaterial (plateau): any combination in the region does about "
                            "as well out of sample - take the centre, and stop chasing the in-sample peak",
              }.get(bs.confidence, "the WFC test found no edge (noise, a consistent loser, or no complete window): no base setting is "
                                   "recommended - the combination below is shown for reference only"),
-            f"**base setting:** {_setting(bs.centre_params)}"
-            + (" - the pooled peak: the region has fewer than 3 combinations, so it has no meaningful centre" if bs.centre_is_peak else ""),
+            f"**base setting:** {_setting(bs.pick_params)} - "
+            + ("the pooled peak of the region" + ("" if bs.peak_in_region else " (it tops a smaller area than the region outlined)")
+               if bs.pick_rule == "pooled peak" else
+               "the centre of the region" + (" - the pooled peak stands in: the region has fewer than 3 combinations" if bs.centre_is_peak else "")),
             f"centre of a region of **{bs.n_component}** combinations: " + " · ".join(f"{n} {lo:g}–{hi:g}" for n, (lo, hi) in zip(names, bs.ranges)),
             f"fitted on {bs.basis_start:%Y-%m-%d} → {bs.basis_end:%Y-%m-%d} ({bs.n_basis_days} trading days): "
             + ("the later half of the history" if mm["window_scheme"] == "single" else "the last window's in-sample plus its out-of-sample to date")]
-if bs.confidence == "supported" and len(bs.ensemble) > 1:
-    bs_lines.append(f"ensemble of {len(bs.ensemble)}, each at 1/{len(bs.ensemble)} size: "
-                    + "; ".join(f"({_short(p)})" for p in bs.ensemble_params)
-                    + (" - a thin region, so members sit one step apart" if bs.ensemble_spacing == 1 else ""))
+if bs.confidence == "supported":
+    bs_lines.append(f"diversified alternative: the region's centre ({_short(bs.centre_params)})"
+                    + (f" or an ensemble of {len(bs.ensemble)}, each at 1/{len(bs.ensemble)} size: "
+                       + "; ".join(f"({_short(p)})" for p in bs.ensemble_params)
+                       + (" - a thin region, so members sit one step apart" if bs.ensemble_spacing == 1 else "")
+                       if len(bs.ensemble) > 1 else ""))
 if rg.n_complete:
     bs_lines.append(f"the centre rule window by window (chosen in-sample, scored out of sample): OOS percentile **{rg.pct_centre:.0f}** on "
                     f"average - best in-sample {rg.pct_best_is:.0f} · pooled peak {rg.pct_best_pooled:.0f} · whole region {rg.pct_region:.0f}"

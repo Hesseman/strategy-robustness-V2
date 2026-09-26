@@ -128,8 +128,11 @@ def test_base_setting_chart_marks_the_centre_the_ensemble_and_kaufmans_cell():
     heat = [t for t in fig.data if t.type == "heatmap"]
     assert len(heat) == 1 and np.allclose(np.array(heat[0].z, dtype=float)[grid.grid_pos[:, 1], grid.grid_pos[:, 0]], b.pooled)
     marks = {t.name: t for t in fig.data if t.type == "scatter" and t.mode == "markers"}
-    c = grid.grid_pos[b.centre]
-    assert (marks["base setting"].x[0], marks["base setting"].y[0]) == (c[0], c[1])
-    assert len(marks["ensemble"].x) == len(b.ensemble) - 1 and "Kaufman's average (display only)" in marks
+    p, c = grid.grid_pos[b.pick], grid.grid_pos[b.centre]
+    assert (marks["base setting"].x[0], marks["base setting"].y[0]) == (p[0], p[1])        # the pooled peak after an edge
+    assert b.pick_rule == "pooled peak" and (list(marks["centre"].x), list(marks["centre"].y)) == (
+        ([c[0]], [c[1]]) if b.pick != b.centre else ([], []))
+    assert len(marks["ensemble"].x) == len([i for i in b.ensemble[1:] if i != b.pick])   # no circle under the star
+    assert "Kaufman's average (display only)" in marks
     assert list(next(t for t in fig.data if t.name == "region").x).count(None) > 0
     assert b.basis_start.strftime("%Y-%m-%d") in fig.layout.title.text
