@@ -31,13 +31,15 @@ st.set_page_config(page_title="Strategy Robustness V2", layout="wide")
 PILL = {"pass": ("#2e8b57", "✓ PASS"), "fail": ("#c0392b", "✗ FAIL"), "score": ("#1f5fbf", "SCORE"),
         "reference": ("#9a9a94", "REFERENCE"), "insufficient": ("#9a9a94", "n < 30 - gate not applied"),
         "insufficient_wfc": ("#9a9a94", "no complete window - gate not applied"),
-        "plateau": ("#9a9a94", "PLATEAU - parameter choice immaterial, gate not applied")}
+        "plateau": ("#9a9a94", "PLATEAU - parameter choice immaterial, gate not applied"),
+        "supported": ("#2e8b57", "SUPPORTED"), "low_stakes": ("#1f5fbf", "LOW STAKES - take the centre"),
+        "none": ("#9a9a94", "NO RECOMMENDATION")}
 MW_SCHEMES = {"multiwalk": "MultiWalk's windows", "two": "2 windows (thirds)", "single": "1 split (halves)"}
 
 
 def pill(verdict: str, extra: str = "") -> str:
     """Accepts a verdict key from PILL (pass | fail | score | reference | insufficient |
-    insufficient_wfc | plateau) and optional extra text; returns the HTML span for the
+    insufficient_wfc | plateau | supported | low_stakes | none) and optional extra text; returns the HTML span for the
     coloured pill. Guarantees every PILL key renders; any other key raises KeyError."""
     color, label = PILL[verdict]
     return (f'<span style="background:{color};color:white;padding:4px 12px;border-radius:14px;'
@@ -321,7 +323,7 @@ if main_ok:
 
 st.divider()
 st.header("MultiWalk surface tests (optional)")
-st.caption("Three more cards for strategies optimised in MultiWalk Pro: they read every parameter combination, not just the winner. "
+st.caption("Four more cards for strategies optimised in MultiWalk Pro: they read every parameter combination, not just the winner. "
            "No report or bars needed.")
 mw_sample = _mw_sample_files()
 with st.expander("What this needs and how to get the two files", expanded=True):
@@ -477,6 +479,60 @@ if rw.null_lift.size:
 if ww.null.size:
     wfc_tabs["Null (ρ)"] = charts.fig_wfc_null(ww)
 card("wfc", wfc_verdict, wfc_lines, tabs=wfc_tabs, extra=f"L = {rg.lift:+.2f}" if rg.n_complete else "")
+
+# Base setting: which combination to trade, given the verdict (docs/wfc-region-lift.md, 'Base setting').
+bs = mw.base
+names, cls = mm["param_names"], bs.axis_class
+
+
+def _setting(params: list[float]) -> str:
+    return " · ".join(f"{n} = {v:g}" + (" (price-scaled)" if c == "price-scaled" else "") for n, v, c in zip(names, params, cls))
+
+
+def _short(params: list[float]) -> str:
+    return "/".join(f"{v:g}" for v in params)
+
+
+bs_lines = [{"supported": "the WFC test found an edge localised in the in-sample region: trade its pooled peak - on the real "
+                          "edges tested, the strongest part of the region held best out of sample",
+             "low stakes": "the WFC test found the parameter choice immaterial (plateau): any combination in the region does about "
+                           "as well out of sample - take the centre, and stop chasing the in-sample peak",
+             }.get(bs.confidence, "the WFC test found no edge (noise, a consistent loser, or no complete window): no base setting is "
+                                  "recommended - the combination below is shown for reference only"),
+            f"**base setting:** {_setting(bs.pick_params)} - "
+            + ("the pooled peak of the region" + ("" if bs.peak_in_region else " (it tops a smaller area than the region outlined)")
+               if bs.pick_rule == "pooled peak" else
+               "the centre of the region" + (" - the pooled peak stands in: the region has fewer than 3 combinations" if bs.centre_is_peak else "")),
+            f"centre of a region of **{bs.n_component}** combinations: " + " · ".join(f"{n} {lo:g}–{hi:g}" for n, (lo, hi) in zip(names, bs.ranges)),
+            f"fitted on {bs.basis_start:%Y-%m-%d} → {bs.basis_end:%Y-%m-%d} ({bs.n_basis_days} trading days): "
+            + ("the later half of the history" if mm["window_scheme"] == "single" else "the last window's in-sample plus its out-of-sample to date")]
+if bs.confidence == "supported":
+    bs_lines.append(f"diversified alternative: the region's centre ({_short(bs.centre_params)})"
+                    + (f" or an ensemble of {len(bs.ensemble)}, each at 1/{len(bs.ensemble)} size: "
+                       + "; ".join(f"({_short(p)})" for p in bs.ensemble_params)
+                       + (" - a thin region, so members sit one step apart" if bs.ensemble_spacing == 1 else "")
+                       if len(bs.ensemble) > 1 else ""))
+if rg.n_complete:
+    bs_lines.append(f"the centre rule window by window (chosen in-sample, scored out of sample): OOS percentile **{rg.pct_centre:.0f}** on "
+                    f"average - best in-sample {rg.pct_best_is:.0f} · pooled peak {rg.pct_best_pooled:.0f} · whole region {rg.pct_region:.0f}"
+                    + (f" · {pick_label} {rg.pct_pick:.0f}" if math.isfinite(rg.pct_pick) else "") + " (100 = better than every combination)")
+priced = [n for n, c in zip(names, cls) if c == "price-scaled"]
+if priced:
+    bs_lines.append(f"{', '.join(priced)}: dollar or point amounts, used as tested - on the real grids checked, such optima stayed steadier "
+                    "in dollars than when scaled by volatility; the centre by window (below the card) shows any drift in this project")
+kf = mw_grid.params[bs.kaufman]
+bs_lines.append(f"Kaufman's average of the five best in-sample combinations: ({_short(kf)})"
+                + (" - one connected area" if bs.kaufman_contiguous else " - ⚠ the five best sit in separate areas, so their average falls "
+                   "between them") + "; display only, never the pick")
+bs_lines.append("read with care: two windows are thin evidence for any pick rule, and an ensemble means running k copies of the "
+                "strategy at 1/k size - awkward below one contract")
+card("base", {"supported": "supported", "low stakes": "low_stakes"}.get(bs.confidence, "none"), bs_lines,
+     charts.fig_base_setting(bs, mw_grid.grid_pos, mw_grid.axes, names))
+with st.expander("Centre by window - does the base setting stay put?"):
+    st.dataframe([{"window": w.label, "complete": "✓" if w.complete else "✗",
+                   **{n: v for n, v in zip(names, wm["centre_params"])},
+                   "centre OOS percentile": _num(rw_.pct_centre, 0), "pooled peak instead": "yes" if rw_.centre_is_peak else ""}
+                  for w, rw_, wm in zip(mw.wfc.windows, rg.windows, mm["windows"])], width="stretch", hide_index=True)
 
 pl_lines = [f"pooled plateau score **{mw.plateau.pooled_score:.2f}** over {mw.plateau.n_complete} complete window(s) (1 = flat and all neighbours profitable, 0 = spike)"
             if math.isfinite(mw.plateau.pooled_score) else "pooled plateau score n/a - no complete window has enough usable points"]

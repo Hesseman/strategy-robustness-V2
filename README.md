@@ -5,7 +5,7 @@ strategy ran on (Data Window export, same symbol and interval). The app joins th
 to the bars and runs the trade-list subset of our robustness battery against the five cards
 below. No files? Click **Try the demo** in the sidebar to run the same battery against a
 synthetic strategy instead. Below the five cards, a timing-sensitivity section shifts every
-entry or exit by a few bars (reference, no verdict). Three more cards are optional and read a
+entry or exit by a few bars (reference, no verdict). Four more cards are optional and read a
 MultiWalk optimisation instead — see "MultiWalk surface tests (optional)" below.
 
 | Card | Question | Verdict type |
@@ -18,6 +18,7 @@ MultiWalk optimisation instead — see "MultiWalk surface tests (optional)" belo
 | Entry delay | does the edge live in the first bars after the signal? | reference (timing section) |
 | Exit delay | is the exit precisely timed? | reference (timing section) |
 | WFC — Walk Forward Correlation | did the region of the parameter grid that was best in-sample beat the grid average out-of-sample? | gate: region lift p < 0.05 with the region profitable OOS, printed with its guards; plateau (not applied) when the parameter choice is immaterial (MultiWalk section, optional) |
+| Base setting | which combination to trade: the centre of the best in-sample region, not its peak | supported / low stakes / none, from the WFC verdict (MultiWalk section, optional) |
 | Plateau | does the chosen parameter set sit on a plateau or a spike? | score 0–1 (MultiWalk section, optional) |
 | Selection haircut | how good does the best of N look when there is nothing to find? | reference (MultiWalk section, optional) |
 
@@ -72,7 +73,7 @@ netting of overlapping trades, and any gate or p-value.
 
 ## MultiWalk surface tests (optional)
 
-Three more cards for strategies optimised in MultiWalk Pro: they read every parameter
+Four more cards for strategies optimised in MultiWalk Pro: they read every parameter
 combination MultiWalk tried, not just the winner, and need no report and no bars.
 
 **Needs MultiWalk Pro.** MultiWalk normally stores the optimisation results in a sealed
@@ -90,7 +91,7 @@ combination MultiWalk tried, not just the winner, and need no report and no bars
 Upload two files: the `..._MultiWalk.txt` from `Optimization Files` and `WalkforwardData.db`
 from `Walkforward Files`. Nothing else is needed - these tests use no bars and no report.
 
-What the three cards mean:
+What the four cards mean:
 
 - **WFC (Walk Forward Correlation)** — gate: whether the region of the grid that was best
   in-sample beat the grid average out-of-sample, not just the one combination MultiWalk picked.
@@ -126,6 +127,18 @@ What the three cards mean:
   out-of-sample rank as dots on the same chart), bands (100+ combinations: mean out-of-sample
   result per tenth of the in-sample ranking) and the two nulls; the top in-sample combinations
   are outlined in red.
+- **Base setting** — which combination to trade once the WFC verdict is in, taken from the best
+  region of the grid (the largest connected top-20% area of the pooled surface, fitted on the last
+  walk-forward window's in-sample plus its out-of-sample) rather than its single best cell: after
+  a PASS the region's pooled peak (the best neighbourhood average, which held up best on real
+  edges), otherwise its centre (Kaufman: trade the middle of the best settings), plus an ensemble
+  of up to 4 combinations spread inside the region at 1/k size each. Its
+  confidence follows the verdict: supported after a PASS, low stakes on a plateau (any setting
+  in the region does about as well — take the centre), none otherwise. The card scores the
+  centre rule window by window against the best in-sample combination and MultiWalk's pick,
+  shows the centre by window, and shows Kaufman's average of the five best for comparison only.
+  Dollar and point parameters are labelled and used as tested: on the real grids checked,
+  their optima stayed steadier in dollars than when scaled by volatility.
 - **Plateau** — score 0–1: whether the chosen parameter set sits on a plateau of neighbours
   that also worked out-of-sample (flat and positive), or on an isolated spike (0 = spike).
 - **Selection haircut** — reference: how much of the best-of-N in-sample result a

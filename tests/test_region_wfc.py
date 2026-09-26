@@ -9,7 +9,8 @@ import pytest
 
 from robustness.multiwalk_text import MultiWalkGrid
 from robustness.plateau_grid import neighbours
-from robustness.region_wfc import largest_component, neighbourhoods, pool, region_test, ridge, top_set
+from robustness.region_wfc import (centre_pick, largest_component, medoid, neighbourhoods, pool, region_test, ridge,
+                                   spread_ensemble, top_set)
 from robustness.windows import Window
 
 # 3x3 grid, first axis fastest (MultiWalk's grid-row order): index i sits at (i % 3, i // 3).
@@ -112,6 +113,8 @@ def test_window_statistics_hand_traced():
     assert set(np.flatnonzero(r.ridge_is).tolist()) == {4, 5, 6} and set(np.flatnonzero(r.ridge_oos).tolist()) == {4, 5}
     assert r.ridge_jaccard == pytest.approx(2 / 3) and r.ridge_shift == pytest.approx(0.5)
     assert (r.pct_best_is, r.pct_best_pooled, r.pct_region, r.pct_pick) == (80.0, 80.0, 90.0, 0.0)
+    # fifth pick rule: the centre of the IS ridge {4, 5, 6} is cell 5 (centroid 5.0) -> y = 6 -> 80
+    assert (r.centre_index, r.centre_is_peak, r.pct_centre) == (5, False, 80.0)
     assert r.null_lift.size == 20 and 1 / 21 <= r.p_lift <= 1.0
 
 
@@ -291,3 +294,54 @@ def test_a_decayed_surface_never_passes():
                 assert r.p_lift >= 0.05, (shape, trade_p, seed, r.lift, r.p_lift)
                 lifts.append(r.lift)
             assert np.mean(lifts) < 0, (shape, trade_p, lifts)
+
+
+# ---- the centre of the in-sample region and a spread ensemble (docs/wfc-region-lift.md, 'Base setting')
+
+def test_medoid_is_the_region_cell_nearest_its_centroid_ties_to_the_higher_value():
+    pos = _grid_pos((5, 5))
+    at = {tuple(p): i for i, p in enumerate(pos.tolist())}
+    plus = np.zeros(25, dtype=bool)
+    plus[[at[(2, 2)], at[(1, 2)], at[(3, 2)], at[(2, 1)], at[(2, 3)]]] = True
+    assert medoid(plus, pos, np.zeros(25)) == at[(2, 2)]
+    # an L (3x3): centroid (1.4, 0.6); (1, 0) and (2, 1) tie at distance sqrt(0.52)
+    pos3 = _grid_pos((3, 3))
+    at3 = {tuple(p): i for i, p in enumerate(pos3.tolist())}
+    ell = np.zeros(9, dtype=bool)
+    ell[[at3[(0, 0)], at3[(1, 0)], at3[(2, 0)], at3[(2, 1)], at3[(2, 2)]]] = True
+    values = np.zeros(9)
+    values[at3[(1, 0)]], values[at3[(2, 1)]] = 5.0, 7.0
+    assert medoid(ell, pos3, values) == at3[(2, 1)]                                # the higher pooled value
+    assert medoid(ell, pos3, np.zeros(9)) == at3[(1, 0)]                          # equal values: grid order
+
+
+def test_centre_pick_falls_back_to_the_pooled_peak_below_three_cells():
+    pos = np.arange(10)[:, None]
+    two = centre_pick(np.array([0, 0, 0, 0, 9, 8, 0, 0, 0, 0.0]), pos)           # ridge {4, 5}
+    assert (two.index, two.is_peak, int(two.component.sum())) == (4, True, 2)
+    three = centre_pick(np.array([0, 0, 0, 8, 9, 8, 0, 0, 0, 0.0]), pos)         # ridge {3, 4, 5}
+    assert (three.index, three.is_peak, int(three.component.sum())) == (4, False, 3)
+
+
+def test_ensemble_is_spread_inside_the_region_greedy_by_pooled_value():
+    """A 5x5 block inside a 7x7 grid, value 100 - 10 x (steps from its centre): k = min(4, 25 // 3)
+    = 4. The interior 3x3 all sits within one step of the centre, so the spacing of 2 rejects it
+    and the ring's best cells follow in grid order: (3, 1), (1, 3), (5, 3)."""
+    pos = _grid_pos((7, 7))
+    at = {tuple(p): i for i, p in enumerate(pos.tolist())}
+    block = np.array([1 <= a <= 5 and 1 <= b <= 5 for a, b in pos.tolist()])
+    values = np.array([100.0 - 10 * (abs(a - 3) + abs(b - 3)) for a, b in pos.tolist()])
+    e = spread_ensemble(block, pos, values, at[(3, 3)])
+    assert e.indices == [at[(3, 3)], at[(3, 1)], at[(1, 3)], at[(5, 3)]] and e.spacing == 2 and e.interior is True
+
+
+def test_a_thin_ridge_without_interior_cells_spreads_one_step_apart():
+    pos = _grid_pos((9, 3))                                                       # a one-cell-wide row b = 1
+    at = {tuple(p): i for i, p in enumerate(pos.tolist())}
+    row = np.array([b == 1 for _, b in pos.tolist()])
+    values = np.array([10.0 - abs(a - 4) if b == 1 else 0.0 for a, b in pos.tolist()])
+    e = spread_ensemble(row, pos, values, at[(4, 1)])
+    assert e.indices == [at[(4, 1)], at[(3, 1)], at[(5, 1)]] and e.spacing == 1 and e.interior is False   # k = 9 // 3
+    small = np.zeros(27, dtype=bool)
+    small[[at[(a, 1)] for a in range(6)]] = True
+    assert len(spread_ensemble(small, pos, values, at[(2, 1)]).indices) == 2                               # k = 6 // 3

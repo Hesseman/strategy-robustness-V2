@@ -115,3 +115,24 @@ def test_region_null_histogram_marks_the_observed_lift():
     _, rw = _region_window((5, 5))
     fig = charts.fig_region_null(rw)
     assert np.allclose(fig.data[0].x, rw.null_lift) and fig.layout.shapes[0].x0 == rw.lift
+
+
+def test_base_setting_chart_marks_the_centre_the_ensemble_and_kaufmans_cell():
+    import numpy as np
+    from robustness.base_setting import base_setting
+    from robustness.synthetic_multiwalk import make_planted_grid
+    from robustness.windows import custom_windows
+    grid = make_planted_grid((7, 7), structure="persistent", rho=0.6, trade_p=0.3, n_days=400, seed=4)
+    b = base_setting(grid, custom_windows(grid.dates, "two"), "edge", "two")
+    fig = charts.fig_base_setting(b, grid.grid_pos, grid.axes, grid.param_names)
+    heat = [t for t in fig.data if t.type == "heatmap"]
+    assert len(heat) == 1 and np.allclose(np.array(heat[0].z, dtype=float)[grid.grid_pos[:, 1], grid.grid_pos[:, 0]], b.pooled)
+    marks = {t.name: t for t in fig.data if t.type == "scatter" and t.mode == "markers"}
+    p, c = grid.grid_pos[b.pick], grid.grid_pos[b.centre]
+    assert (marks["base setting"].x[0], marks["base setting"].y[0]) == (p[0], p[1])        # the pooled peak after an edge
+    assert b.pick_rule == "pooled peak" and (list(marks["centre"].x), list(marks["centre"].y)) == (
+        ([c[0]], [c[1]]) if b.pick != b.centre else ([], []))
+    assert len(marks["ensemble"].x) == len([i for i in b.ensemble[1:] if i != b.pick])   # no circle under the star
+    assert "Kaufman's average (display only)" in marks
+    assert list(next(t for t in fig.data if t.name == "region").x).count(None) > 0
+    assert b.basis_start.strftime("%Y-%m-%d") in fig.layout.title.text

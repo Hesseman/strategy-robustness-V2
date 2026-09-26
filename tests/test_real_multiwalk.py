@@ -136,3 +136,21 @@ def test_signflip_null_takes_le2601_off_the_torus_pass(grid, groups):
     assert 0.04 <= mw.wfc_np.pooled_p <= 0.12
     print("LE2601 two-scheme NP/AvgDD pooled p: torus", torus.wfc.pooled_p, "sign-flip", flip.wfc.pooled_p,
           "| MultiWalk schedule NP pooled p sign-flip", mw.wfc_np.pooled_p)
+
+
+def test_base_setting_on_le2601_reads_low_stakes_and_fits_on_the_last_window(grid, groups):
+    """LE2601 reads plateau, so its base setting is low stakes: take the centre. The basis is the
+    last (incubation) window's in-sample plus its out-of-sample to the last data day."""
+    from robustness.multiwalk_battery import run_multiwalk_battery
+    r = run_multiwalk_battery(grid, groups, n_null=199, n_boot=50, seed=0)
+    b, last = r.base, r.windows[-1]
+    assert b.confidence == "low stakes" and b.reading == "plateau"
+    assert b.basis_start == grid.dates[last.is_mask][0] and b.basis_end == grid.dates[-1]
+    assert b.component[b.centre] and b.n_component >= 3 and not b.centre_is_peak
+    assert b.pick_rule == "centre" and b.pick == b.centre                                        # a plateau: the centre
+    assert b.axis_class == ["scale-free", "price-scaled", "scale-free"]
+    assert np.isfinite(r.region.pct_centre) and all(len(w["centre_params"]) == 3 for w in r.meta["windows"])
+    print("LE2601 base setting:", dict(zip(grid.param_names, b.centre_params)), "region", b.n_component, "cells",
+          b.ranges, "| ensemble", b.ensemble_params, "| Kaufman contiguous", b.kaufman_contiguous,
+          "| pct centre", round(r.region.pct_centre, 1), "best IS", round(r.region.pct_best_is, 1),
+          "| centre by window", [w["centre_params"] for w in r.meta["windows"]])

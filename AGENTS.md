@@ -17,7 +17,8 @@ cards. The statistics live in `robustness/`, the UI in `app/`.
 
 ## Before changing
 
-- **WFC card** (region lift, sign-flip null, verdict matrix, printed guards, N_eff): read
+- **WFC or base-setting card** (region lift, sign-flip null, verdict matrix, printed guards,
+  N_eff, base setting, centre, ensemble, dollar parameters): read
   `docs/wfc-region-lift.md` for the method, the decisions and their reasons, the evidence, the
   known gaps and the code map.
 - **Timing section:** read `docs/plans/2026-09-23-timing-sensitivity.md`.

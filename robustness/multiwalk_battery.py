@@ -12,6 +12,7 @@ import numpy as np
 from robustness.battery import _jsonable
 from robustness.join import Check
 from robustness.multiwalk_text import MultiWalkGrid
+from robustness.base_setting import BaseSetting, base_setting
 from robustness.plateau_grid import PlateauResult, plateau_test
 from robustness.region_wfc import Q_TOP, RegionResult, region_test
 from robustness.selection import SelectionResult, selection_test
@@ -42,6 +43,7 @@ class MultiWalkResult:
     wfc: WFCResult
     wfc_np: WFCResult | None
     region: RegionResult
+    base: BaseSetting
     plateau: PlateauResult
     selection: SelectionResult
     verdicts: dict
@@ -143,7 +145,11 @@ def run_multiwalk_battery(grid: MultiWalkGrid, groups: list[WFGroup], *, group_n
     a gate), the region's and the grid's mean OOS net profit, per complete window the region's
     margin over the grid (region_minus_grid, windows_ahead of windows_complete), and the lift's p
     under the centred block bootstrap (p_lift_boot; the cross-check, never the gate) with
-    nulls_disagree; each meta window carries its own region_minus_grid.
+    nulls_disagree; each meta window carries its own region_minus_grid and centre_params (the
+    parameters of the centre of that window's in-sample ridge - the fifth pick rule,
+    region.pct_centre). base = the recommended base setting (base_setting.base_setting over the
+    last window's in-sample plus its out-of-sample), its pick and confidence taken from the
+    verdict reading.
     Guarantees: raises ValueError for an unknown window_scheme or null and MultiWalkValidationFailed
     when an error-severity check fails; nothing downstream runs then; min_trades never reaches the
     region verdict; deterministic for a given seed."""
@@ -203,6 +209,7 @@ def run_multiwalk_battery(grid: MultiWalkGrid, groups: list[WFGroup], *, group_n
               "windows_complete": len(complete), "p_lift_boot": region.p_lift_boot,
               "nulls_disagree": nulls_disagree(region.p_lift, region.p_lift_boot, alpha)}
     oos_trades = [trades[i][1] for i in complete]
+    base = base_setting(grid, windows, reading, window_scheme)
     meta = {"strategy": group.strategy, "symbol": group.symbol, "interval": group.interval, "group": group.label,
             "fitness": group.fitness_name, "fitness_abbr": group.fitness_abbr, "metric": metric,
             "param_names": grid.param_names, "shape": list(grid.shape), "n_iter": grid.n_iter,
@@ -214,11 +221,12 @@ def run_multiwalk_battery(grid: MultiWalkGrid, groups: list[WFGroup], *, group_n
             "window_scheme": window_scheme, "pick_label": "MultiWalk's pick" if window_scheme == "multiwalk" else "best in-sample",
             "windows": [{"index": w.index, "label": w.label, "is_start": w.is_start, "is_end": w.is_end, "oos_start": w.oos_start,
                          "oos_end": w.oos_end, "complete": w.complete, "grid_row": w.grid_row, "params": list(w.params),
-                         "is_trades_median": tr[0], "oos_trades_median": tr[1], "wfc_reading": rd, "region_minus_grid": mg}
-                        for w, tr, rd, mg in zip(windows, trades, window_readings, margins)],
+                         "is_trades_median": tr[0], "oos_trades_median": tr[1], "wfc_reading": rd, "region_minus_grid": mg,
+                         "centre_params": [float(v) for v in grid.params[rw.centre_index]]}
+                        for w, tr, rd, mg, rw in zip(windows, trades, window_readings, margins, region.windows)],
             "n_null": n_null, "n_boot": n_boot, "seed": seed, "min_trades": min_trades, "alpha": alpha, "null": null, "block": block,
             "in_period": f"{group.in_len} {group.in_type}", "out_period": f"{group.out_len} {group.out_type}", "anchored": group.anchored}
-    return MultiWalkResult(meta=meta, checks=checks, windows=windows, wfc=wfc, wfc_np=wfc_np, region=region, plateau=plateau,
+    return MultiWalkResult(meta=meta, checks=checks, windows=windows, wfc=wfc, wfc_np=wfc_np, region=region, base=base, plateau=plateau,
                            selection=selection, verdicts=verdicts, gates_passed=int(wfc_verdict == "pass"), gates_total=1,
                            caveat=CAVEAT_MW)
 
