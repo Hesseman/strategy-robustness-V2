@@ -376,8 +376,8 @@ st.caption(f"{mm['group']} · windows: {MW_SCHEMES[mm['window_scheme']]} · metr
            f"{mm['n_complete']} of {mm['n_windows']} windows complete · {mm['n_null']} null draws, {mm['n_boot']} resamples, seed {mm['seed']}")
 pick_label = mm["pick_label"]
 rg = mw.region
-_plateau_why = (f"the combinations are too alike to score a region (≈ {mm['n_eff_median']:.1f} effective independent variants, "
-                f"{mm['n_distinct_median']:.0f} distinct out-of-sample patterns; {NEFF_MIN:g} and {2 * rg.k} needed)"
+_plateau_why = (f"the combinations repeat out of sample (only {mm['n_distinct_median']:.0f} distinct daily patterns among "
+                f"{mm['n_iter']}; a top-20% region of {rg.k} needs {2 * rg.k}), so no region can be scored"
                 if not mm["wfc_scoreable"] else
                 "the in-sample top region did not beat the grid average out of sample while the grid as a whole made money")
 _not_applied = {"insufficient": "no complete walk-forward window",
@@ -395,10 +395,16 @@ def _num(v: float, nd: int = 2):
     return (int(round(v)) if nd == 0 else round(v, nd)) if math.isfinite(v) else None
 
 
+def _usd(v: float) -> str:
+    """Signed dollars for a margin: '+$9,180', '−$7,193'."""
+    return f"{'+' if v >= 0 else '−'}${abs(v):,.0f}"
+
+
 rows = []
 for w, rw, pw, sw, wm in zip(mw.wfc.windows, rg.windows, mw.plateau.windows, mw.selection.windows, mm["windows"]):
     rows.append({"window": w.label, "complete": "✓" if w.complete else "✗", "IS trades": wm["is_trades_median"],
                  "OOS trades": wm["oos_trades_median"], "lift L (SD)": _num(rw.lift), "lift p": _num(rw.p_lift, 3),
+                 "region − grid $": _num(wm["region_minus_grid"], 0),
                  "reading": READINGS[wm["wfc_reading"]].split(" - ")[0], "precision": _num(rw.precision),
                  "Spearman ρ": _num(w.spearman, 3), "ρ p": w.p_value if w.null.size else None, "points": w.n_points,
                  "plateau (OOS)": _num(pw.score_oos), "pick deflated p": _num(sw.p_pick, 3),
@@ -421,11 +427,20 @@ if rg.n_complete:
                  f"**${rg.grid_oos_mean:,.0f}** → L = **{rg.lift:+.2f} SD**, {_p3(rg.p_lift)} (gate < 0.05) → *{READINGS[reading]}*"]
 else:
     wfc_lines = ["no complete window - the region lift has nothing to pool"]
+gd = mm["wfc_guards"]
+if reading == "edge":                   # the facts a PASS is read with (docs/wfc-region-lift.md, 'Printed guards')
+    few = (f" - fewer than {NEFF_MIN:g}, so the lift rests on the handful of trades where they differ" if gd["few_variants"] else "")
+    neff_txt = f"≈ **{gd['n_eff_median']:.1f}** effective independent variants{few}; " if math.isfinite(gd["n_eff_median"]) else ""
+    wfc_lines.append(f"**Read with the PASS:** {neff_txt}out of sample the region made **${gd['region_oos_mean']:,.0f}** against the "
+                     f"grid's **${gd['grid_oos_mean']:,.0f}** ({_usd(gd['region_oos_mean'] - gd['grid_oos_mean'])}); ahead of the grid "
+                     f"in **{gd['windows_ahead']} of {gd['windows_complete']}** complete window(s): "
+                     + ", ".join(_usd(m) for m in gd["region_minus_grid"]))
 if rg.n_complete:
-    wfc_lines.append(f"effective independent variants ≈ **{mm['n_eff_median']:.1f}**, distinct out-of-sample patterns "
-                     f"**{mm['n_distinct_median']:.0f}** of {mm['n_iter']} (medians over complete windows); below {NEFF_MIN:g} variants "
-                     f"or {2 * rg.k} patterns a region cannot be scored"
-                     + ("" if mm["wfc_scoreable"] else " → **plateau branch, gate not applied**"))
+    neff_ctx = (f"effective independent variants ≈ **{mm['n_eff_median']:.1f}** (context, not a gate: the null holds however "
+                f"alike the variants are; below {NEFF_MIN:g} a lift rests on a handful of trades); " if math.isfinite(mm["n_eff_median"]) else "")
+    wfc_lines.append(f"{neff_ctx}distinct out-of-sample patterns **{mm['n_distinct_median']:.0f}** of {mm['n_iter']} "
+                     f"(medians over complete windows; a region of {rg.k} needs {2 * rg.k})"
+                     + ("" if mm["wfc_scoreable"] else " → **not scored: plateau, gate not applied**"))
 if math.isfinite(rg.precision):
     wfc_lines.append(f"overlap: {rg.precision:.0%} of the region sits in the out-of-sample top 20% (chance: 20%), {_p3(rg.p_precision)}; "
                      f"ridge (largest connected top-20% area) Jaccard in vs out of sample {rg.ridge_jaccard:.2f}, "

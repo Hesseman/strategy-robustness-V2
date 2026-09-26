@@ -73,10 +73,12 @@ def validate(grid: MultiWalkGrid, group: WFGroup) -> list[Check]:
 
 
 # Below this many effective independent variants (the selection card's participation ratio) the
-# combinations are nearly one strategy: the region cannot be scored, the parameter choice is
-# immaterial (the plateau branch of the verdict matrix).
+# combinations are nearly one strategy, and a significant lift rests on the handful of trades where
+# they differ. A caution printed beside a PASS (meta wfc_guards.few_variants), never a gate: the
+# sign-flip null holds however alike the variants are, and real grids sit at 1.0-1.7, so a gate here
+# hid every significant ridge but one (decision 2026-09-25, docs/wfc-region-lift.md).
 NEFF_MIN = 3.0
-# The verdict matrix of docs/research/2026-09-25-wfc-region-concordance.md § 6 step 6.
+# The verdict matrix of docs/wfc-region-lift.md ('The verdict'): Tinsley's, with the lift as the row test.
 READINGS = {"edge": "structural edge, localised in the in-sample top region",
             "loser": "consistent loser - the top region beats the grid average but loses money",
             "plateau": "plateau - parameter choice immaterial, the strategy-level tests govern",
@@ -89,7 +91,7 @@ def region_reading(p_lift: float, region_oos_mean: float, grid_oos_mean: float, 
     """The verdict matrix with the region lift as the row test.
 
     Accepts: the lift's p, the region's and the grid's mean out-of-sample net profit, whether the
-    grid can be scored (N_eff >= NEFF_MIN and distinct OOS patterns >= 2 x region size) and alpha.
+    grid can be scored (distinct OOS daily patterns >= 2 x region size) and alpha.
     Returns a READINGS key: 'plateau' when not scoreable; otherwise a significant lift reads
     'edge' (region positive out of sample) or 'loser', a non-significant one 'plateau' (grid
     average positive out of sample) or 'noise'. Guarantees a NaN p counts as not significant."""
@@ -100,10 +102,11 @@ def region_reading(p_lift: float, region_oos_mean: float, grid_oos_mean: float, 
     return "plateau" if grid_oos_mean > 0 else "noise"
 
 
-def _scoreable(n_eff: float, n_distinct: float, k: int) -> bool:
-    """False when there are too few effective variants or distinct OOS patterns to score a region;
-    a NaN count never blocks."""
-    return not (np.isfinite(n_eff) and n_eff < NEFF_MIN) and not (np.isfinite(n_distinct) and n_distinct < 2 * k)
+def _scoreable(n_distinct: float, k: int) -> bool:
+    """False when the out-of-sample results repeat - fewer distinct daily patterns than twice the
+    region, so a top-k set would only measure clusters of identical variants lining up with
+    themselves; a NaN count never blocks. N_eff deliberately plays no part (see NEFF_MIN)."""
+    return not (np.isfinite(n_distinct) and n_distinct < 2 * k)
 
 
 def run_multiwalk_battery(grid: MultiWalkGrid, groups: list[WFGroup], *, group_no: int | None = None, n_null: int = 999,
@@ -126,10 +129,13 @@ def run_multiwalk_battery(grid: MultiWalkGrid, groups: list[WFGroup], *, group_n
     on net profit, n_null draws), plateau, selection and verdicts {'wfc': pass|fail|plateau|
     insufficient, 'plateau': 'score', 'selection': 'reference'}. The WFC verdict is the region
     matrix (region_reading, meta wfc_reading): pass = edge; fail = loser or noise; plateau = the
-    lift is not significant on a grid positive out of sample, or the grid cannot be scored
-    (median N_eff over the complete windows < NEFF_MIN, or median distinct OOS patterns < 2 x the
-    region size; meta wfc_scoreable, n_eff_median, n_distinct_median); insufficient = no complete
-    window. gates 0/1 of 1.
+    lift is not significant on a grid positive out of sample, or the grid cannot be scored (median
+    distinct OOS patterns over the complete windows < 2 x the region size; meta wfc_scoreable,
+    n_distinct_median); insufficient = no complete window. gates 0/1 of 1. meta wfc_guards - the
+    facts printed beside a PASS - holds n_eff_median and few_variants (< NEFF_MIN; context, never
+    a gate), the region's and the grid's mean OOS net profit, and per complete window the region's
+    margin over the grid (region_minus_grid, windows_ahead of windows_complete); each meta window
+    carries its own region_minus_grid.
     Guarantees: raises ValueError for an unknown window_scheme or null and MultiWalkValidationFailed
     when an error-severity check fails; nothing downstream runs then; min_trades never reaches the
     region verdict; deterministic for a given seed."""
@@ -175,14 +181,18 @@ def run_multiwalk_battery(grid: MultiWalkGrid, groups: list[WFGroup], *, group_n
     neffs = [selection.windows[i].n_eff for i in complete if np.isfinite(selection.windows[i].n_eff)]
     n_eff_median = float(np.median(neffs)) if neffs else float("nan")
     n_distinct_median = float(np.median([region.windows[i].n_distinct_oos for i in complete])) if complete else float("nan")
-    scoreable = _scoreable(n_eff_median, n_distinct_median, region.k)
+    scoreable = _scoreable(n_distinct_median, region.k)
     reading = (region_reading(region.p_lift, region.region_oos_mean, region.grid_oos_mean, scoreable=scoreable, alpha=alpha)
                if region.n_complete else "insufficient")
     wfc_verdict = _GATE.get(reading, "insufficient")
     verdicts = {"wfc": wfc_verdict, "plateau": "score", "selection": "reference"}
     window_readings = [region_reading(rw.p_lift, rw.region_oos_mean, rw.grid_oos_mean, alpha=alpha,
-                                      scoreable=_scoreable(sw.n_eff, rw.n_distinct_oos, rw.k))
-                       for rw, sw in zip(region.windows, selection.windows)]
+                                      scoreable=_scoreable(rw.n_distinct_oos, rw.k)) for rw in region.windows]
+    margins = [rw.region_oos_mean - rw.grid_oos_mean for rw in region.windows]
+    guards = {"n_eff_median": n_eff_median, "few_variants": bool(np.isfinite(n_eff_median) and n_eff_median < NEFF_MIN),
+              "region_oos_mean": region.region_oos_mean, "grid_oos_mean": region.grid_oos_mean,
+              "region_minus_grid": [margins[i] for i in complete], "windows_ahead": sum(margins[i] > 0 for i in complete),
+              "windows_complete": len(complete)}
     oos_trades = [trades[i][1] for i in complete]
     meta = {"strategy": group.strategy, "symbol": group.symbol, "interval": group.interval, "group": group.label,
             "fitness": group.fitness_name, "fitness_abbr": group.fitness_abbr, "metric": metric,
@@ -190,13 +200,13 @@ def run_multiwalk_battery(grid: MultiWalkGrid, groups: list[WFGroup], *, group_n
             "dates_start": grid.dates[0], "dates_end": grid.dates[-1], "n_days": grid.n_days,
             "n_windows": len(windows), "n_complete": sum(w.complete for w in windows),
             "n_eff_median": n_eff_median, "n_distinct_median": n_distinct_median, "wfc_scoreable": bool(scoreable),
-            "wfc_reading": reading, "region_k": region.k, "q": Q_TOP,
+            "wfc_reading": reading, "wfc_guards": guards, "region_k": region.k, "q": Q_TOP,
             "oos_trades_median": float(np.median(oos_trades)) if oos_trades else float("nan"),
             "window_scheme": window_scheme, "pick_label": "MultiWalk's pick" if window_scheme == "multiwalk" else "best in-sample",
             "windows": [{"index": w.index, "label": w.label, "is_start": w.is_start, "is_end": w.is_end, "oos_start": w.oos_start,
                          "oos_end": w.oos_end, "complete": w.complete, "grid_row": w.grid_row, "params": list(w.params),
-                         "is_trades_median": tr[0], "oos_trades_median": tr[1], "wfc_reading": rd}
-                        for w, tr, rd in zip(windows, trades, window_readings)],
+                         "is_trades_median": tr[0], "oos_trades_median": tr[1], "wfc_reading": rd, "region_minus_grid": mg}
+                        for w, tr, rd, mg in zip(windows, trades, window_readings, margins)],
             "n_null": n_null, "n_boot": n_boot, "seed": seed, "min_trades": min_trades, "alpha": alpha, "null": null, "block": block,
             "in_period": f"{group.in_len} {group.in_type}", "out_period": f"{group.out_len} {group.out_type}", "anchored": group.anchored}
     return MultiWalkResult(meta=meta, checks=checks, windows=windows, wfc=wfc, wfc_np=wfc_np, region=region, plateau=plateau,

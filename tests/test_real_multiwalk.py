@@ -87,13 +87,13 @@ def test_real_battery_runs_and_prints(grid, groups):
 
 
 def test_region_layer_reproduces_the_notes_le2601_row_and_reads_plateau(grid, groups):
-    """Oracle from docs/research/2026-09-25-wfc-region-concordance.md § 3 (LE2601, net profit,
-    sign-flip null, 499 draws, seed 0 - the prototype's settings): MultiWalk's windows give a
-    top-20% lift of +0.32 SD at p = 0.156, overlap precision 0.29 (p 0.30), ridge Jaccard 0.21 and
-    a 2.9-step ridge shift; the 'two' scheme +0.32 at p = 0.17, precision 0.44 (p 0.092). The
+    """Oracle from the research prototype's real-grid table (docs/wfc-region-lift.md, 'Evidence';
+    LE2601, net profit, sign-flip null, 499 draws, seed 0): MultiWalk's windows give a top-20%
+    lift of +0.32 SD at p = 0.156, overlap precision 0.29 (p 0.30), ridge Jaccard 0.21 and a
+    2.9-step ridge shift; the 'two' scheme +0.32 at p = 0.17, precision 0.44 (p 0.092). The
     production module draws exactly as the prototype did, so the p-values reproduce to the draw.
-    Through the battery (999 draws) the lift stays insignificant and N_eff ~1.5 takes the plateau
-    branch anyway."""
+    Through the battery (999 draws) the lift stays insignificant on a grid that made money out of
+    sample: the matrix reads plateau. N_eff ~1.3 is flagged as a guard, not used as a gate."""
     from robustness.multiwalk_battery import run_multiwalk_battery
     from robustness.region_wfc import region_test
     from robustness.windows import custom_windows, derive_windows
@@ -108,14 +108,15 @@ def test_region_layer_reproduces_the_notes_le2601_row_and_reads_plateau(grid, gr
     assert two.precision == pytest.approx(0.44, abs=0.005) and two.p_precision == pytest.approx(0.092)
     r = run_multiwalk_battery(grid, groups, n_null=999, n_boot=50, seed=0)
     assert r.region.lift == pytest.approx(mw.lift) and 0.10 <= r.region.p_lift <= 0.25
-    assert r.meta["n_eff_median"] < 3.0 and r.meta["wfc_scoreable"] is False
+    assert r.meta["n_eff_median"] < 3.0 and r.meta["wfc_guards"]["few_variants"] is True and r.meta["wfc_scoreable"] is True
+    assert r.region.grid_oos_mean > 0 and r.meta["wfc_guards"]["windows_complete"] == 2
     assert r.meta["wfc_reading"] == "plateau" and r.verdicts["wfc"] == "plateau" and r.gates_passed == 0
     print("LE2601 region lift: MultiWalk windows", round(mw.lift, 3), "p", mw.p_lift, "precision", round(mw.precision, 3),
           "| two", round(two.lift, 3), "p", two.p_lift, "| battery p (999)", r.region.p_lift, r.meta["wfc_reading"])
 
 
 def test_signflip_null_takes_le2601_off_the_torus_pass(grid, groups):
-    """Oracle from docs/research/2026-09-25-wfc-region-concordance.md: on the 'two' scheme the
+    """Oracle from the research behind docs/wfc-region-lift.md ('The null'): on the 'two' scheme the
     torus null passed LE2601's NP/AvgDD surface (p = 0.022) and the sign-flip null does not
     (p = 0.165); on the MultiWalk schedule net profit moves from p = 0.028 to 0.066. The bands
     below leave room for Monte-Carlo noise at 999 draws."""

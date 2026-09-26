@@ -17,7 +17,7 @@ MultiWalk optimisation instead — see "MultiWalk surface tests (optional)" belo
 | Drawdown & capital | CDaR-80, capital = 5 × CDaR-80, annual % | reference |
 | Entry delay | does the edge live in the first bars after the signal? | reference (timing section) |
 | Exit delay | is the exit precisely timed? | reference (timing section) |
-| WFC — Walk Forward Correlation | did the region of the parameter grid that was best in-sample beat the grid average out-of-sample? | gate: region lift p < 0.05 with the region profitable OOS; plateau (not applied) when the parameter choice is immaterial (MultiWalk section, optional) |
+| WFC — Walk Forward Correlation | did the region of the parameter grid that was best in-sample beat the grid average out-of-sample? | gate: region lift p < 0.05 with the region profitable OOS, printed with its guards; plateau (not applied) when the parameter choice is immaterial (MultiWalk section, optional) |
 | Plateau | does the chosen parameter set sit on a plateau or a spike? | score 0–1 (MultiWalk section, optional) |
 | Selection haircut | how good does the best of N look when there is nothing to find? | reference (MultiWalk section, optional) |
 
@@ -104,13 +104,18 @@ What the three cards mean:
   **PASS** (a structural edge, localised in the region); significant but the region loses, or
   not significant while the whole grid lost → **FAIL**; not significant while the grid made
   money → **plateau**: the parameter choice is immaterial and the five cards above govern (gate
-  not applied). A grid whose combinations are nearly one strategy (fewer than 3 effective
-  independent variants) or repeat out-of-sample (fewer distinct results than twice the region)
-  is not scored and reads plateau too. Why a region and not a correlation over every
-  combination: the flat majority of a grid dilutes a ridge that persists, so Tinsley's
-  correlation — still shown, with the same null — is kept for continuity, never as the gate.
-  No minimum trade count per combination; below about 20 out-of-sample trades per combination
-  nothing has power — use 2 windows. Tabs: the surface (in- and out-of-sample heatmaps, raw and pooled, the
+  not applied). A grid whose combinations repeat out-of-sample (fewer distinct results than
+  twice the region: identical variants) is not scored and reads plateau too. Every PASS is
+  printed with the facts to read it with: the effective number of independent variants (below
+  3 the variants are nearly one strategy and the lift rests on the few trades where they
+  differ; shown as context, not a gate, because the null already holds however alike they
+  are), the region's and the grid's out-of-sample dollars, and the region's margin over the
+  grid in each window. Why a region and not a correlation over every combination: the flat
+  majority of a grid dilutes a ridge that persists, so Tinsley's correlation — still shown,
+  with the same null — is kept for continuity, never as the gate. No minimum trade count per
+  combination; below about 20 out-of-sample trades per combination nothing has power — use 2
+  windows. The method, its decisions and the evidence behind them are in
+  [docs/wfc-region-lift.md](docs/wfc-region-lift.md). Tabs: the surface (in- and out-of-sample heatmaps, raw and pooled, the
   largest connected top-20% area outlined; grids of 3+ parameters sliced through the best
   pooled in-sample combination), a scatter with a green best-fit line (Tinsley's chart), a
   ranked profile (combinations sorted by in-sample result, in-sample rank as a line and

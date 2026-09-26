@@ -30,6 +30,12 @@ def test_persistent_passes_wfc_gate_and_reports_everything():
     assert r.region.n_complete == 1 and r.region.p_lift < 0.05 and r.region.region_oos_mean > 0
     assert r.meta["wfc_reading"] == "edge" and r.meta["wfc_scoreable"] is True
     assert r.meta["region_k"] == 7 and r.meta["q"] == 0.2 and r.meta["n_distinct_median"] == 36
+    g = r.meta["wfc_guards"]                                          # printed beside every PASS
+    assert g["few_variants"] is False and g["n_eff_median"] == r.meta["n_eff_median"]
+    assert g["region_oos_mean"] == r.region.region_oos_mean and g["grid_oos_mean"] == r.region.grid_oos_mean
+    assert g["windows_complete"] == 1 and g["windows_ahead"] == 1
+    assert g["region_minus_grid"] == [r.region.windows[0].region_oos_mean - r.region.windows[0].grid_oos_mean]
+    assert r.meta["windows"][0]["region_minus_grid"] == g["region_minus_grid"][0] > 0
 
 
 def _drift(grid, per_day, split=800):
@@ -41,7 +47,7 @@ def _drift(grid, per_day, split=800):
 
 
 def test_verdict_matrix_has_the_lift_as_the_row_test_and_the_oos_sign_as_the_column():
-    """Note § 6 step 6: L significant and R positive OOS -> edge (pass); L significant and R
+    """docs/wfc-region-lift.md, 'The verdict': L significant and R positive OOS -> edge (pass); L significant and R
     negative -> consistent loser (fail); L not significant and the grid average positive ->
     plateau (gate not applied); L not significant and the grid negative -> noise (fail)."""
     cases = (("persistent", 0.0, "edge", "pass"), ("persistent", -1000.0, "loser", "fail"),
@@ -108,11 +114,13 @@ def test_json_export_is_finite_and_complete():
     assert d["wfc"]["windows"][0]["null"] is not None and "x" in d["wfc"]["windows"][0]
     rw = d["region"]["windows"][0]
     assert len(rw["null_lift"]) == 20 and len(rw["region"]) == 7 and len(rw["ridge_is"]) == 36 and "wfc_reading" in d["meta"]
+    assert set(d["meta"]["wfc_guards"]) == {"n_eff_median", "few_variants", "region_oos_mean", "grid_oos_mean",
+                                            "region_minus_grid", "windows_ahead", "windows_complete"}
     json.dumps(d, allow_nan=False)
 
 
 def test_min_trades_only_holes_the_continuity_correlation_never_the_region():
-    """No per-cell min-trade hole in the region layer (note § 6.7): the correlation, kept for
+    """No per-cell min-trade hole in the region layer (docs/wfc-region-lift.md): the correlation, kept for
     continuity, goes insufficient; the verdict still comes from the lift."""
     grid, groups, _ = _inputs("persistent")
     r = run_multiwalk_battery(grid, groups, n_null=199, n_boot=10, min_trades=10**6)
@@ -163,18 +171,36 @@ def _near_identical(grid, seed=0, scale=0.02):
     return grid
 
 
-def test_nearly_identical_variants_take_the_plateau_branch():
-    """Structure gate (note § 6 step 2): below NEFF_MIN effective variants the region is not
-    scored - the parameter choice is immaterial, whatever the lift reads."""
+def test_few_effective_variants_are_flagged_never_gated():
+    """N_eff is context, not a gate (docs/wfc-region-lift.md, 'Decisions'): the sign-flip null
+    holds however alike the variants are, so nearly one strategy is still scored by the matrix -
+    here with nothing planted, so it cannot pass - and the guard reports how few variants there are."""
     grid, groups, _ = _inputs("noise")
     r = run_multiwalk_battery(_near_identical(grid), groups, n_null=199, n_boot=50, seed=0)
-    assert r.meta["n_eff_median"] < NEFF_MIN == 3.0
-    assert r.meta["wfc_scoreable"] is False and r.meta["wfc_reading"] == "plateau"
-    assert r.verdicts["wfc"] == "plateau" and r.gates_passed == 0
+    assert r.meta["n_eff_median"] < NEFF_MIN == 3.0 and r.meta["wfc_guards"]["few_variants"] is True
+    assert r.meta["wfc_scoreable"] is True and r.meta["wfc_reading"] in ("plateau", "noise") and r.gates_passed == 0
+
+
+def test_a_real_edge_on_nearly_one_strategy_passes_with_its_guards():
+    """The case an N_eff gate would hide (real grids sit at N_eff 1.0-1.7): a shared daily path
+    thirty times the cells' own noise makes the variants nearly one strategy, while a persistent
+    bump still separates them. The lift subtracts the shared path and its null keeps it, so the
+    verdict is unchanged - PASS - and the guards say it rests on few effective variants."""
+    grid, groups, _ = _inputs("persistent")
+    plain = run_multiwalk_battery(grid, groups, n_null=199, n_boot=50, seed=0)
+    shared = np.random.default_rng(5).normal(0.0, 3000.0, size=grid.n_days)
+    shared[800:] += 100.0 - shared[800:].mean()                       # keep the OOS days profitable on average
+    grid.daily_pnl = grid.daily_pnl + shared[None, :]
+    r = run_multiwalk_battery(grid, groups, n_null=199, n_boot=50, seed=0)
+    g = r.meta["wfc_guards"]
+    assert r.meta["n_eff_median"] < NEFF_MIN and g["few_variants"] is True and plain.meta["n_eff_median"] >= NEFF_MIN
+    assert r.region.lift == pytest.approx(plain.region.lift) and r.region.p_lift == plain.region.p_lift
+    assert r.verdicts["wfc"] == "pass" and r.meta["wfc_reading"] == "edge" and r.meta["wfc_scoreable"] is True
+    assert g["windows_ahead"] == g["windows_complete"] == 1 and g["region_oos_mean"] > g["grid_oos_mean"] > 0
 
 
 def test_too_few_distinct_oos_patterns_take_the_plateau_branch_even_with_a_real_edge():
-    """Identical variants out of sample (a parameter that does not bind there): 5 distinct
+    """The only structure gate. Identical variants out of sample (a parameter that does not bind there): 5 distinct
     patterns < 2 x 7 - any top-set statistic would only measure cluster self-alignment."""
     grid, groups, _ = _inputs("persistent")
     grid.daily_pnl[:, 800:] = grid.daily_pnl[np.arange(36) % 5, 800:]
