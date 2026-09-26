@@ -85,10 +85,21 @@ def make_multiwalk(axes: dict[str, list[float]], n_days: int = 600, seed: int = 
 
 
 PLANTED = ("noise", "ridge", "persistent", "decay")
+TAILS = ("normal", "jumps")
+JUMP_P = 0.03   # tail='jumps': the share of trades that are large winners
+
+
+def _white(rng: np.random.Generator, size: tuple[int, int], tail: str) -> np.ndarray:
+    """Mean-0, SD-1 trade noise: Gaussian, or 'jumps' - a large winner with probability JUMP_P and a
+    small loser otherwise (right skew (1 - 2p) / sqrt(p(1 - p)), about 5.5)."""
+    if tail == "normal":
+        return rng.normal(size=size)
+    return ((rng.random(size) < JUMP_P) - JUMP_P) / np.sqrt(JUMP_P * (1 - JUMP_P))
 
 
 def make_planted_grid(shape: tuple[int, ...] = (6, 6), *, structure: str = "noise", rho: float = 0.9, trade_p: float = 0.2,
-                      n_days: int = 600, split: int | None = None, signal: float = 0.3, seed: int = 0) -> MultiWalkGrid:
+                      n_days: int = 600, split: int | None = None, signal: float = 0.3, tail: str = "normal",
+                      seed: int = 0) -> MultiWalkGrid:
     """A planted-truth optimisation grid whose neighbouring cells share most of their noise, as real
     neighbouring parameter sets share most of their trades (the design behind docs/wfc-region-lift.md,
     'Evidence'). Every cell trades on the same days (probability trade_p per day); per trade
@@ -98,22 +109,27 @@ def make_planted_grid(shape: tuple[int, ...] = (6, 6), *, structure: str = "nois
     Accepts: shape; structure in PLANTED - 'noise' (mu = 0), 'ridge' (a narrow bump covering about a
     fifth of an otherwise flat grid), 'persistent' (a wide bump, positive centre and negative rim) or
     'decay' (the wide bump with its sign flipped from day `split`, default 2/3 of n_days); rho in
-    [0, 1]; trade_p; n_days; signal = mu at the bump's peak, in units of the noise SD; seed.
+    [0, 1]; trade_p; n_days; signal = mu at the bump's peak, in units of the noise SD; tail in TAILS -
+    the trade noise before smoothing, 'normal' or 'jumps' (rare large trades: a large winner with
+    probability JUMP_P, a small loser otherwise; mean 0, SD 1, so H0 still holds on a 'noise' grid);
+    seed.
     Returns: a MultiWalkGrid on weekdays from 2020-01-06 (last axis varies fastest; params = grid
     positions); closed P&L = daily P&L, one exit per trading day.
-    Guarantees: deterministic for a seed; a 'noise' grid does not depend on signal or split; raises
-    ValueError for another structure."""
+    Guarantees: deterministic for a seed; a 'noise' grid does not depend on signal or split; the
+    'normal' tail draws the stream it always drew; raises ValueError for another structure or tail."""
     if structure not in PLANTED:
         raise ValueError(f"structure must be one of {PLANTED}, got {structure!r}")
+    if tail not in TAILS:
+        raise ValueError(f"tail must be one of {TAILS}, got {tail!r}")
     rng = np.random.default_rng(seed)
     pos = np.array(list(itertools.product(*[range(s) for s in shape])), dtype=int)
     n = len(pos)
     trade_day = rng.random(n_days) < trade_p
-    white = rng.normal(size=(n, n_days))
+    white = _white(rng, (n, n_days), tail)
     d = np.abs(pos[:, None, :] - pos[None, :, :]).max(axis=2)
     field = np.stack([white[d[i] <= 2].mean(axis=0) for i in range(n)])
     field /= field.std(axis=1, keepdims=True)
-    noise = np.sqrt(rho) * field + np.sqrt(1 - rho) * rng.normal(size=(n, n_days))
+    noise = np.sqrt(rho) * field + np.sqrt(1 - rho) * _white(rng, (n, n_days), tail)
     mu, factor = np.zeros(n), np.ones(n_days)
     if structure != "noise":   # the bump's centre comes from its own stream, so the noise above is shared by every structure
         centre = np.array([np.random.default_rng([seed, 1]).uniform(0.3, 0.7) * (s - 1) for s in shape])

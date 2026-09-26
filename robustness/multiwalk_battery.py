@@ -104,6 +104,13 @@ def region_reading(p_lift: float, region_oos_mean: float, grid_oos_mean: float, 
     return "plateau" if grid_oos_mean > 0 else "noise"
 
 
+def nulls_disagree(p_flip: float, p_boot: float, alpha: float = 0.05) -> bool:
+    """The cross-check's rule, fixed a priori (docs/wfc-region-lift.md, 'Decisions'): True when the
+    lift's sign-flip p and its centred block bootstrap p fall on different sides of alpha - one
+    < alpha, the other >= alpha. A NaN p counts as not significant, as in region_reading."""
+    return bool((np.isfinite(p_flip) and p_flip < alpha) != (np.isfinite(p_boot) and p_boot < alpha))
+
+
 def _scoreable(n_distinct: float, k: int) -> bool:
     """False when the out-of-sample results repeat - fewer distinct daily patterns than twice the
     region, so a top-k set would only measure clusters of identical variants lining up with
@@ -135,12 +142,14 @@ def run_multiwalk_battery(grid: MultiWalkGrid, groups: list[WFGroup], *, group_n
     distinct OOS patterns over the complete windows < 2 x the region size; meta wfc_scoreable,
     n_distinct_median); insufficient = no complete window. gates 0/1 of 1. meta wfc_guards - the
     facts printed beside a PASS - holds n_eff_median and few_variants (< NEFF_MIN; context, never
-    a gate), the region's and the grid's mean OOS net profit, and per complete window the region's
-    margin over the grid (region_minus_grid, windows_ahead of windows_complete); each meta window
-    carries its own region_minus_grid and centre_params (the parameters of the centre of that
-    window's in-sample ridge - the fifth pick rule, region.pct_centre). base = the recommended base
-    setting (base_setting.base_setting over the last window's in-sample plus its out-of-sample),
-    its confidence taken from the verdict reading.
+    a gate), the region's and the grid's mean OOS net profit, per complete window the region's
+    margin over the grid (region_minus_grid, windows_ahead of windows_complete), and the lift's p
+    under the centred block bootstrap (p_lift_boot; the cross-check, never the gate) with
+    nulls_disagree; each meta window carries its own region_minus_grid and centre_params (the
+    parameters of the centre of that window's in-sample ridge - the fifth pick rule,
+    region.pct_centre). base = the recommended base setting (base_setting.base_setting over the
+    last window's in-sample plus its out-of-sample), its pick and confidence taken from the
+    verdict reading.
     Guarantees: raises ValueError for an unknown window_scheme or null and MultiWalkValidationFailed
     when an error-severity check fails; nothing downstream runs then; min_trades never reaches the
     region verdict; deterministic for a given seed."""
@@ -197,7 +206,8 @@ def run_multiwalk_battery(grid: MultiWalkGrid, groups: list[WFGroup], *, group_n
     guards = {"n_eff_median": n_eff_median, "few_variants": bool(np.isfinite(n_eff_median) and n_eff_median < NEFF_MIN),
               "region_oos_mean": region.region_oos_mean, "grid_oos_mean": region.grid_oos_mean,
               "region_minus_grid": [margins[i] for i in complete], "windows_ahead": sum(margins[i] > 0 for i in complete),
-              "windows_complete": len(complete)}
+              "windows_complete": len(complete), "p_lift_boot": region.p_lift_boot,
+              "nulls_disagree": nulls_disagree(region.p_lift, region.p_lift_boot, alpha)}
     oos_trades = [trades[i][1] for i in complete]
     base = base_setting(grid, windows, reading, window_scheme)
     meta = {"strategy": group.strategy, "symbol": group.symbol, "interval": group.interval, "group": group.label,

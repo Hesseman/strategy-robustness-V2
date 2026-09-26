@@ -3,8 +3,8 @@ import json
 import numpy as np
 import pytest
 
-from robustness.multiwalk_battery import (CAVEAT_MW, NEFF_MIN, READINGS, MultiWalkValidationFailed, mw_to_json, region_reading,
-                                          run_multiwalk_battery)
+from robustness.multiwalk_battery import (CAVEAT_MW, NEFF_MIN, READINGS, MultiWalkValidationFailed, mw_to_json, nulls_disagree,
+                                          region_reading, run_multiwalk_battery)
 from robustness.multiwalk_text import parse_multiwalk_text
 from robustness.synthetic_multiwalk import make_multiwalk, make_walkforward_db
 from robustness.walkforward_db import parse_walkforward_db
@@ -35,6 +35,7 @@ def test_persistent_passes_wfc_gate_and_reports_everything():
     assert g["region_oos_mean"] == r.region.region_oos_mean and g["grid_oos_mean"] == r.region.grid_oos_mean
     assert g["windows_complete"] == 1 and g["windows_ahead"] == 1
     assert g["region_minus_grid"] == [r.region.windows[0].region_oos_mean - r.region.windows[0].grid_oos_mean]
+    assert g["p_lift_boot"] == r.region.p_lift_boot < 0.05 and g["nulls_disagree"] is False   # a strong edge passes both nulls
     assert r.meta["windows"][0]["region_minus_grid"] == g["region_minus_grid"][0] > 0
     b = r.base                                                        # the recommended base setting
     assert b.confidence == "supported" and b.reading == "edge" and b.component[b.centre] and b.ensemble[0] == b.centre
@@ -78,6 +79,18 @@ def test_region_reading_table():
             (0.01, 5.0, 1.0, False, "plateau"), (0.30, -5.0, -1.0, False, "plateau")):
         assert region_reading(p, region, grid_mean, scoreable=scoreable) == expected, (p, region, grid_mean, scoreable)
     assert set(READINGS) == {"edge", "loser", "plateau", "noise"}
+
+
+def test_the_nulls_disagree_when_their_p_values_straddle_alpha():
+    """The disagreement rule, fixed a priori (docs/wfc-region-lift.md, 'Decisions'): the sign-flip p and
+    the bootstrap p fall on different sides of alpha - one < 0.05, the other >= 0.05. A NaN p counts
+    as not significant, as in the verdict matrix."""
+    nan = float("nan")
+    table = [((0.03, 0.04), False), ((0.03, 0.05), True), ((0.05, 0.03), True), ((0.2, 0.9), False), ((0.002, 0.002), False),
+             ((0.049, nan), True), ((nan, 0.3), False), ((nan, nan), False)]
+    for (flip, boot), expected in table:
+        assert nulls_disagree(flip, boot) is expected, (flip, boot)
+    assert nulls_disagree(0.03, 0.08, alpha=0.1) is False
 
 
 def test_battery_records_the_null_and_keeps_torus_behind_the_flag():
@@ -124,8 +137,11 @@ def test_json_export_is_finite_and_complete():
     rw = d["region"]["windows"][0]
     assert len(rw["null_lift"]) == 20 and len(rw["region"]) == 7 and len(rw["ridge_is"]) == 36 and "wfc_reading" in d["meta"]
     assert set(d["meta"]["wfc_guards"]) == {"n_eff_median", "few_variants", "region_oos_mean", "grid_oos_mean",
-                                            "region_minus_grid", "windows_ahead", "windows_complete"}
-    assert {"confidence", "centre_params", "ensemble_params", "ranges", "axis_class", "kaufman_contiguous"} <= set(d["base"])
+                                            "region_minus_grid", "windows_ahead", "windows_complete", "p_lift_boot",
+                                            "nulls_disagree"}
+    assert len(rw["null_lift_boot"]) == 20 and d["region"]["p_lift_boot"] is not None
+    assert {"confidence", "pick_params", "centre_params", "ensemble_params", "ranges", "axis_class",
+            "kaufman_contiguous"} <= set(d["base"])
     assert len(d["meta"]["windows"][0]["centre_params"]) == 2
     json.dumps(d, allow_nan=False)
 

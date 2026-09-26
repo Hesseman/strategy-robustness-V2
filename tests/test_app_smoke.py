@@ -104,6 +104,7 @@ def test_app_renders_multiwalk_section_on_sample(tmp_path, monkeypatch):
     assert tabs[:3] == ["Surface", "Scatter", "Ranked profile"] and "Bands" not in tabs   # 20 combinations: no bands
     assert "Null (lift)" in tabs and "Null (ρ)" in tabs
     assert "Read with the PASS:" in joined and "ahead of the grid in **1 of 1** complete window" in joined
+    assert "under the sign-flip null (the gate)" in joined and "under the centred block bootstrap" in joined
     assert "context, not a gate" in joined
     assert "Base setting - which combination to trade?" in joined and "SUPPORTED" in joined
     assert "**base setting:** A = " in joined and "centre of a region of" in joined and "Kaufman's average" in joined
