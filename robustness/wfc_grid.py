@@ -1,12 +1,13 @@
 """Walk Forward Correlation on the optimisation grid (Tinsley 2026, SSRN 6324079; spec decision 5).
-X = in-sample metric, Y = out-of-sample metric per parameter combination; WFC = rho(X, Y). The gate
-follows signal_lab/robustness/wfc.py: Spearman, a null, and the paper's Diagnostic Matrix rule that
-correlation alone is not edge (positive OOS among the positive-IS points). The null (amended
-2026-09-25, docs/research/2026-09-25-wfc-region-concordance.md) is the block sign-flip of the OOS
-daily cross-sectional deviations (null_signflip.SignFlipNull): it keeps every cell's noise
-covariance, edges and ties. The torus shift of the OOS surface on the grid is kept behind
-null='torus' for comparison only - it passes 10-30% of no-structure grids once neighbours share
-their noise, which real grids always do."""
+X = in-sample metric, Y = out-of-sample metric per parameter combination; WFC = rho(X, Y). Since
+2026-09-25 this is the WFC card's continuity number, not its gate: the battery's gate is the region
+lift (region_wfc; docs/wfc-region-lift.md). WFCResult.passed keeps the paper's rule for comparison -
+Spearman, a null, and the Diagnostic Matrix rule that correlation alone is not edge (positive OOS
+among the positive-IS points), as ported from signal_lab/robustness/wfc.py. The null (amended
+2026-09-25) is the block sign-flip of the OOS daily cross-sectional deviations
+(null_signflip.SignFlipNull): it keeps every cell's noise covariance, edges and ties. The torus
+shift of the OOS surface on the grid is kept behind null='torus' for comparison only - it passes
+10-30% of no-structure grids once neighbours share their noise, which real grids always do."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

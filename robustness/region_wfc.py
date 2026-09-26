@@ -1,5 +1,5 @@
-"""Region lift on the optimisation grid (docs/research/2026-09-25-wfc-region-concordance.md § 6; spec
-decision 5, amended 2026-09-25). Tinsley's WFC correlates every cell, so on a mostly flat grid the
+"""Region lift on the optimisation grid - the WFC card's gate since 2026-09-25. Method, decisions,
+evidence and known gaps: docs/wfc-region-lift.md. Tinsley's WFC correlates every cell, so on a mostly flat grid the
 flat majority dilutes a ridge. The region layer asks the trader's question instead: does the
 in-sample top region beat the grid average out of sample? Per window, on net profit: the pooled
 in-sample surface (each cell = the equal-weight mean of itself and its Chebyshev-1 neighbours, no
@@ -8,8 +8,9 @@ grid mean) / the cross-cell SD of OOS net profit, scored on the raw OOS surface 
 sign-flip null (null_signflip.SignFlipNull). For display: the overlap precision of R with the pooled
 OOS top Q_TOP, the largest connected top-Q_TOP component in vs out of sample (Jaccard, centroid
 shift), and where four pick rules landed out of sample. Deliberately absent: a correlation of the
-pooled surfaces (§ 4b: weaker than the pointwise one on real-like noise). No per-cell min-trade
-hole: the null prices each cell's noise. Only reason to change: the region method's definition."""
+pooled surfaces (weaker than the pointwise one on correlated noise). No per-cell min-trade hole:
+the null prices each cell's noise. The verdict built on these statistics (matrix, structure gate,
+printed guards) lives in multiwalk_battery. Only reason to change: the region method's definition."""
 from __future__ import annotations
 
 import itertools
@@ -23,7 +24,7 @@ from robustness.plateau_grid import neighbours
 from robustness.surface import window_metrics
 from robustness.windows import Window
 
-Q_TOP = 0.2   # share of the grid in the region; fixed a priori (§ 6.8), never tuned per project
+Q_TOP = 0.2   # share of the grid in the region; fixed a priori, never tuned per project (docs/wfc-region-lift.md, Decisions)
 
 
 def neighbourhoods(grid_pos: np.ndarray) -> list[np.ndarray]:
@@ -240,7 +241,7 @@ def region_test(grid: MultiWalkGrid, windows: list[Window], *, n_null: int = 999
     sign-flip draws per window, seed, and the sign-flip block length in trading days.
     Returns: RegionResult with one RegionWindow per window, in order. A window's null is
     SignFlipNull(grid, 'NP', block).draws of the raw OOS net profit, seeded seed + 1000 x window
-    index; a draw's lift is scaled by the observed SD (a fixed unit per window, as in the note's
+    index; a draw's lift is scaled by the observed SD (a fixed unit per window, as in the research
     prototype) and its precision is taken on the pooled draw. Pooled over the complete windows:
     the mean of each statistic and, for L and precision, the per-window draws averaged draw by
     draw (the windows' draws are independent); p = (k + 1) / (n + 1). Precision pools only the

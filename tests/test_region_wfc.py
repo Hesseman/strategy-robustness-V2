@@ -1,4 +1,4 @@
-"""Region lift on the optimisation grid (docs/research/2026-09-25-wfc-region-concordance.md § 6):
+"""Region lift on the optimisation grid (docs/wfc-region-lift.md):
 the in-sample top 20% of the pooled in-sample surface, judged by its out-of-sample net profit
 against the grid average, under the block sign-flip null."""
 import math
@@ -170,7 +170,7 @@ def test_identical_variants_leave_precision_and_jaccard_unscored_but_not_the_lif
     assert r.lift == pytest.approx(4.0 / math.sqrt(4.2)) and math.isnan(r.pct_pick)
 
 
-# ---- planted-truth oracles (note § 4b): 750 days, split at day 500, pass = p < 0.05
+# ---- planted-truth oracles (docs/wfc-region-lift.md, 'Evidence'): 750 days, split at day 500, pass = p < 0.05
 
 def _split(grid, split=500):
     """One complete window: in-sample = the days before split; the pick = the best in-sample net profit."""
@@ -200,7 +200,7 @@ def _pass_rates(structure, shape, trade_p, rhos, seeds, n_null=199):
 
 
 def test_region_lift_outpowers_the_pointwise_correlation_on_a_narrow_ridge_with_adequate_trades():
-    """Oracle, note § 4b (8x8 narrow ridge, neighbour-noise correlation 0.6 and 0.9 as on real
+    """Oracle, docs/wfc-region-lift.md 'Evidence' (8x8 narrow ridge, neighbour-noise correlation 0.6 and 0.9 as on real
     grids): with ~127 OOS trades per combination the lift passes 0.73-0.87 vs pointwise 0.33-0.50;
     with ~51 trades 0.37-0.47 vs 0.33; with ~20 trades both sit near size (0.13-0.20)."""
     seeds = range(30)
@@ -215,7 +215,7 @@ def test_region_lift_outpowers_the_pointwise_correlation_on_a_narrow_ridge_with_
 def test_region_lift_size_is_controlled_on_correlated_noise_grids():
     """Oracle for the statistic under its null: nothing planted, neighbours sharing 90% of their
     noise (the generator of test_wfc_grid's size oracle) - the lift must pass at most 7% of the
-    time at the 5% level; overlap precision (display only) is conservative in the note (2.8%)."""
+    time at the 5% level; overlap precision (display only) is conservative (2.6% in the sweep)."""
     from robustness.synthetic_multiwalk import make_planted_grid
     from robustness.windows import custom_windows
     lift = prec = 0
@@ -229,7 +229,7 @@ def test_region_lift_size_is_controlled_on_correlated_noise_grids():
 
 
 def test_a_decayed_surface_never_passes():
-    """Note § 4b: when the bump flips sign after the split, the in-sample top region is the
+    """When the bump flips sign after the split, the in-sample top region is the
     out-of-sample bottom - never significant, and negative on average once trades suffice."""
     from robustness.synthetic_multiwalk import make_planted_grid
     for shape in ((8, 8), (6, 5, 4)):

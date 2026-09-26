@@ -90,8 +90,8 @@ PLANTED = ("noise", "ridge", "persistent", "decay")
 def make_planted_grid(shape: tuple[int, ...] = (6, 6), *, structure: str = "noise", rho: float = 0.9, trade_p: float = 0.2,
                       n_days: int = 600, split: int | None = None, signal: float = 0.3, seed: int = 0) -> MultiWalkGrid:
     """A planted-truth optimisation grid whose neighbouring cells share most of their noise, as real
-    neighbouring parameter sets share most of their trades (docs/research/2026-09-25-wfc-region-
-    concordance.md § 4). Every cell trades on the same days (probability trade_p per day); per trade
+    neighbouring parameter sets share most of their trades (the design behind docs/wfc-region-lift.md,
+    'Evidence'). Every cell trades on the same days (probability trade_p per day); per trade
     $ P&L = 100 x (mu(cell) x factor(day) + noise), noise = sqrt(rho) x a field smoothed over the grid
     (Chebyshev radius 2) + sqrt(1 - rho) x the cell's own noise; rounded to cents.
 
