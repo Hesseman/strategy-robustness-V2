@@ -93,7 +93,10 @@ def test_region_layer_reproduces_the_notes_le2601_row_and_reads_plateau(grid, gr
     2.9-step ridge shift; the 'two' scheme +0.32 at p = 0.17, precision 0.44 (p 0.092). The
     production module draws exactly as the prototype did, so the p-values reproduce to the draw.
     Through the battery (999 draws) the lift stays insignificant on a grid that made money out of
-    sample: the matrix reads plateau. N_eff ~1.3 is flagged as a guard, not used as a gate."""
+    sample: the matrix reads plateau. N_eff ~1.3 is flagged as a guard, not used as a gate. The
+    centred block bootstrap draws from its own stream, so none of the flip's numbers move; its own
+    p (0.126 and 0.130) is a regression pin recorded when it was added (2026-09-25), not an
+    independent oracle - it agrees with the flip: both nulls leave LE2601 insignificant."""
     from robustness.multiwalk_battery import run_multiwalk_battery
     from robustness.region_wfc import region_test
     from robustness.windows import custom_windows, derive_windows
@@ -106,13 +109,16 @@ def test_region_layer_reproduces_the_notes_le2601_row_and_reads_plateau(grid, gr
     two = region_test(grid, two_windows, n_null=499, seed=0)
     assert two.lift == pytest.approx(0.32, abs=0.005) and two.p_lift == pytest.approx(0.172)
     assert two.precision == pytest.approx(0.44, abs=0.005) and two.p_precision == pytest.approx(0.092)
+    assert mw.p_lift_boot == pytest.approx(0.126) and two.p_lift_boot == pytest.approx(0.130)
     r = run_multiwalk_battery(grid, groups, n_null=999, n_boot=50, seed=0)
     assert r.region.lift == pytest.approx(mw.lift) and 0.10 <= r.region.p_lift <= 0.25
     assert r.meta["n_eff_median"] < 3.0 and r.meta["wfc_guards"]["few_variants"] is True and r.meta["wfc_scoreable"] is True
     assert r.region.grid_oos_mean > 0 and r.meta["wfc_guards"]["windows_complete"] == 2
     assert r.meta["wfc_reading"] == "plateau" and r.verdicts["wfc"] == "plateau" and r.gates_passed == 0
-    print("LE2601 region lift: MultiWalk windows", round(mw.lift, 3), "p", mw.p_lift, "precision", round(mw.precision, 3),
-          "| two", round(two.lift, 3), "p", two.p_lift, "| battery p (999)", r.region.p_lift, r.meta["wfc_reading"])
+    assert r.meta["wfc_guards"]["nulls_disagree"] is False
+    print("LE2601 region lift: MultiWalk windows", round(mw.lift, 3), "p", mw.p_lift, "boot p", mw.p_lift_boot, "precision",
+          round(mw.precision, 3), "| two", round(two.lift, 3), "p", two.p_lift, "boot p", two.p_lift_boot,
+          "| battery p (999)", r.region.p_lift, "boot", r.region.p_lift_boot, r.meta["wfc_reading"])
 
 
 def test_signflip_null_takes_le2601_off_the_torus_pass(grid, groups):

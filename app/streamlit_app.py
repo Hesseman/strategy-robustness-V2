@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import timing_section  # noqa: E402
 from app.copy import CARDS, CONCEPT, HELP  # noqa: E402
 from app.loaders import loaded_bars, parsed_report  # noqa: E402
+from app.wfc_text import read_with_the_pass  # noqa: E402
 from robustness import charts  # noqa: E402
 from robustness.bars_loader import BarsFormatError  # noqa: E402
 from robustness.battery import ValidationFailed, run_battery, to_json  # noqa: E402
@@ -395,11 +396,6 @@ def _num(v: float, nd: int = 2):
     return (int(round(v)) if nd == 0 else round(v, nd)) if math.isfinite(v) else None
 
 
-def _usd(v: float) -> str:
-    """Signed dollars for a margin: '+$9,180', '−$7,193'."""
-    return f"{'+' if v >= 0 else '−'}${abs(v):,.0f}"
-
-
 rows = []
 for w, rw, pw, sw, wm in zip(mw.wfc.windows, rg.windows, mw.plateau.windows, mw.selection.windows, mm["windows"]):
     rows.append({"window": w.label, "complete": "✓" if w.complete else "✗", "IS trades": wm["is_trades_median"],
@@ -427,14 +423,8 @@ if rg.n_complete:
                  f"**${rg.grid_oos_mean:,.0f}** → L = **{rg.lift:+.2f} SD**, {_p3(rg.p_lift)} (gate < 0.05) → *{READINGS[reading]}*"]
 else:
     wfc_lines = ["no complete window - the region lift has nothing to pool"]
-gd = mm["wfc_guards"]
 if reading == "edge":                   # the facts a PASS is read with (docs/wfc-region-lift.md, 'Printed guards')
-    few = (f" - fewer than {NEFF_MIN:g}, so the lift rests on the handful of trades where they differ" if gd["few_variants"] else "")
-    neff_txt = f"≈ **{gd['n_eff_median']:.1f}** effective independent variants{few}; " if math.isfinite(gd["n_eff_median"]) else ""
-    wfc_lines.append(f"**Read with the PASS:** {neff_txt}out of sample the region made **${gd['region_oos_mean']:,.0f}** against the "
-                     f"grid's **${gd['grid_oos_mean']:,.0f}** ({_usd(gd['region_oos_mean'] - gd['grid_oos_mean'])}); ahead of the grid "
-                     f"in **{gd['windows_ahead']} of {gd['windows_complete']}** complete window(s): "
-                     + ", ".join(_usd(m) for m in gd["region_minus_grid"]))
+    wfc_lines.append(read_with_the_pass(mm["wfc_guards"], rg.p_lift))
 if rg.n_complete:
     neff_ctx = (f"effective independent variants ≈ **{mm['n_eff_median']:.1f}** (context, not a gate: the null holds however "
                 f"alike the variants are; below {NEFF_MIN:g} a lift rests on a handful of trades); " if math.isfinite(mm["n_eff_median"]) else "")
